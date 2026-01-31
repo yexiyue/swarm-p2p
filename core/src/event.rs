@@ -1,7 +1,9 @@
 use libp2p::{Multiaddr, PeerId};
+use serde::Serialize;
 
 /// 对外暴露的节点事件
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum NodeEvent {
     /// 开始监听某个地址
     Listening(Multiaddr),

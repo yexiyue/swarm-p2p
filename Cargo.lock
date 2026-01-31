@@ -271,6 +271,9 @@ name = "bytes"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cc"
@@ -1466,6 +1469,7 @@ dependencies = [
  "quick-protobuf-codec",
  "rand 0.8.5",
  "regex",
+ "serde",
  "sha2",
  "tracing",
  "web-time",
@@ -1504,6 +1508,7 @@ dependencies = [
  "multihash",
  "quick-protobuf",
  "rand 0.8.5",
+ "serde",
  "sha2",
  "thiserror 2.0.18",
  "tracing",
@@ -1529,6 +1534,7 @@ dependencies = [
  "quick-protobuf",
  "quick-protobuf-codec",
  "rand 0.8.5",
+ "serde",
  "sha2",
  "smallvec",
  "thiserror 2.0.18",
@@ -1899,6 +1905,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b430e7953c29dd6a09afc29ff0bb69c6e306329ee6794700aee27b76a1aea8d"
 dependencies = [
  "core2",
+ "serde",
  "unsigned-varint 0.8.0",
 ]
 
