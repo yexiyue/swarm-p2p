@@ -1,0 +1,37 @@
+[package]
+name = "swarm-p2p-core"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+libp2p = { version = "0.56.0", features = [
+    "kad",
+    "mdns",
+    "noise",
+    "quic",
+    "tcp",
+    "tokio",
+    "yamux",
+    "identify",
+    "dns",
+    "ping",
+    "relay",
+    "gossipsub",
+    "dcutr",
+    "autonat",
+    "macros",
+    "request-response",
+] }
+tokio = "1.49.0"
+futures = "0.3.31"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tracing = "0.1.44"
+parking_lot = "0.12.5"
+async-trait = "0.1.89"
+
+[features]
+default = ["client"]
+client = []
+server = []
