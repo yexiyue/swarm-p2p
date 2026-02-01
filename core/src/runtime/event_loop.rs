@@ -92,14 +92,14 @@ impl EventLoop {
         event: &SwarmEvent<CoreBehaviourEvent>,
     ) -> Option<NodeEvent> {
         match event {
-            SwarmEvent::NewListenAddr { address, .. } => {
-                Some(NodeEvent::Listening(address.clone()))
-            }
+            SwarmEvent::NewListenAddr { address, .. } => Some(NodeEvent::Listening {
+                addr: address.clone(),
+            }),
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                Some(NodeEvent::PeerConnected(*peer_id))
+                Some(NodeEvent::PeerConnected { peer_id: *peer_id })
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                Some(NodeEvent::PeerDisconnected(*peer_id))
+                Some(NodeEvent::PeerDisconnected { peer_id: *peer_id })
             }
             SwarmEvent::Behaviour(CoreBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(
                 peers,
@@ -112,9 +112,9 @@ impl EventLoop {
                         }
                     }
                 }
-                Some(NodeEvent::PeersDiscovered(
-                    peers.iter().map(|(p, a)| (*p, a.clone())).collect(),
-                ))
+                Some(NodeEvent::PeersDiscovered {
+                    peers: peers.iter().map(|(p, a)| (*p, a.clone())).collect(),
+                })
             }
             SwarmEvent::Behaviour(CoreBehaviourEvent::Identify(
                 libp2p::identify::Event::Received { peer_id, info, .. },

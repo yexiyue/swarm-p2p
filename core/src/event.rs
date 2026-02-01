@@ -6,18 +6,29 @@ use serde::Serialize;
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NodeEvent {
     /// 开始监听某个地址
-    Listening(Multiaddr),
+    Listening {
+        addr: Multiaddr,
+    },
 
     /// 发现 peers（mDNS）
-    PeersDiscovered(Vec<(PeerId, Multiaddr)>),
+    PeersDiscovered {
+        peers: Vec<(PeerId, Multiaddr)>,
+    },
 
     /// peer 已连接
-    PeerConnected(PeerId),
+    #[serde(rename_all = "camelCase")]
+    PeerConnected {
+        peer_id: PeerId,
+    },
 
     /// peer 已断开
-    PeerDisconnected(PeerId),
+    #[serde(rename_all = "camelCase")]
+    PeerDisconnected {
+        peer_id: PeerId,
+    },
 
     /// 收到 identify 信息
+    #[serde(rename_all = "camelCase")]
     IdentifyReceived {
         peer_id: PeerId,
         agent_version: String,
