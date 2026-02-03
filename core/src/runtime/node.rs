@@ -37,7 +37,7 @@ pub fn start(keypair: &Keypair, config: NodeConfig) -> Result<(NetClient, EventR
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
 
     // 创建 event loop
-    let mut event_loop = EventLoop::new(swarm, command_rx, event_tx);
+    let mut event_loop = EventLoop::new(swarm, command_rx, event_tx, config.protocol_version.clone());
 
     // 启动监听
     event_loop.start_listen(&config.listen_addrs)?;

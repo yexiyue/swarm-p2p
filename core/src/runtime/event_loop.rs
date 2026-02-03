@@ -1,11 +1,12 @@
 use futures::StreamExt;
+use libp2p::{autonat, ping};
 use libp2p::swarm::SwarmEvent;
 use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 
 use super::CoreBehaviourEvent;
 use crate::command::{Command, CoreSwarm};
-use crate::event::NodeEvent;
+use crate::event::{NatStatus, NodeEvent};
 
 /// 事件循环
 pub struct EventLoop {
@@ -13,6 +14,8 @@ pub struct EventLoop {
     command_rx: mpsc::Receiver<Command>,
     event_tx: mpsc::Sender<NodeEvent>,
     active_commands: Vec<Command>,
+    /// 本机的协议版本，用于判断是否加入 Kad
+    protocol_version: String,
 }
 
 impl EventLoop {
@@ -20,12 +23,14 @@ impl EventLoop {
         swarm: CoreSwarm,
         command_rx: mpsc::Receiver<Command>,
         event_tx: mpsc::Sender<NodeEvent>,
+        protocol_version: String,
     ) -> Self {
         Self {
             swarm,
             command_rx,
             event_tx,
             active_commands: Vec::new(),
+            protocol_version,
         }
     }
 
@@ -95,12 +100,20 @@ impl EventLoop {
             SwarmEvent::NewListenAddr { address, .. } => Some(NodeEvent::Listening {
                 addr: address.clone(),
             }),
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                Some(NodeEvent::PeerConnected { peer_id: *peer_id })
-            }
-            SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                Some(NodeEvent::PeerDisconnected { peer_id: *peer_id })
-            }
+            // 只在第一个连接建立时通知（peer 级别聚合）
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                num_established,
+                ..
+            } if num_established.get() == 1 => Some(NodeEvent::PeerConnected { peer_id: *peer_id }),
+            SwarmEvent::ConnectionEstablished { .. } => None,
+            // 只在最后一个连接关闭时通知（peer 级别聚合）
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            } if *num_established == 0 => Some(NodeEvent::PeerDisconnected { peer_id: *peer_id }),
+            SwarmEvent::ConnectionClosed { .. } => None,
             SwarmEvent::Behaviour(CoreBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(
                 peers,
             ))) => {
@@ -116,13 +129,48 @@ impl EventLoop {
                     peers: peers.iter().map(|(p, a)| (*p, a.clone())).collect(),
                 })
             }
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Ping(ping::Event {
+                peer,
+                result: Ok(rtt),
+                ..
+            })) => Some(NodeEvent::PingSuccess {
+                peer_id: *peer,
+                rtt_ms: rtt.as_millis() as u64,
+            }),
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Ping(_)) => None,
             SwarmEvent::Behaviour(CoreBehaviourEvent::Identify(
                 libp2p::identify::Event::Received { peer_id, info, .. },
-            )) => Some(NodeEvent::IdentifyReceived {
-                peer_id: *peer_id,
-                agent_version: info.agent_version.clone(),
-                protocol_version: info.protocol_version.clone(),
-            }),
+            )) => {
+                // 如果协议版本匹配，自动加入 Kad
+                if info.protocol_version == self.protocol_version {
+                    for addr in &info.listen_addrs {
+                        self.swarm
+                            .behaviour_mut()
+                            .kad
+                            .add_address(peer_id, addr.clone());
+                    }
+                    info!("Added peer {} to Kad (protocol: {})", peer_id, info.protocol_version);
+                }
+                Some(NodeEvent::IdentifyReceived {
+                    peer_id: *peer_id,
+                    agent_version: info.agent_version.clone(),
+                    protocol_version: info.protocol_version.clone(),
+                })
+            }
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(e))=>{
+                None
+            }
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(autonat::Event::StatusChanged {
+                new,
+                ..
+            })) => {
+                let (status, public_addr) = match new {
+                    autonat::NatStatus::Public(addr) => (NatStatus::Public, Some(addr.clone())),
+                    autonat::NatStatus::Private => (NatStatus::Private, None),
+                    autonat::NatStatus::Unknown => (NatStatus::Unknown, None),
+                };
+                Some(NodeEvent::NatStatusChanged { status, public_addr })
+            }
             _ => None,
         }
     }
