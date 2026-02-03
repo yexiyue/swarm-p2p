@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use libp2p::swarm::SwarmEvent;
 use tokio::sync::mpsc;
-use tracing::{trace, warn};
+use tracing::{info, trace, warn};
 
 use super::CoreBehaviourEvent;
 use crate::command::{Command, CoreSwarm};
@@ -48,7 +48,7 @@ impl EventLoop {
                     match cmd {
                         Some(cmd) => self.handle_command(cmd).await,
                         None => {
-                            trace!("Command channel closed, shutting down");
+                            info!("Command channel closed, shutting down");
                             return;
                         }
                     }

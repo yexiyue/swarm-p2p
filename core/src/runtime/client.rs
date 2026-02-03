@@ -1,9 +1,9 @@
 use libp2p::PeerId;
 use tokio::sync::mpsc;
 
+use crate::Result;
 use crate::command::{Command, CommandFuture, DialCommand};
 use crate::event::NodeEvent;
-use crate::Result;
 
 /// 网络客户端，用于发送命令
 #[derive(Clone)]
@@ -20,6 +20,10 @@ impl NetClient {
     pub async fn dial(&self, peer_id: PeerId) -> Result<()> {
         let cmd = DialCommand::new(peer_id);
         CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    pub fn shutdown(self) {
+        drop(self.command_tx);
     }
 }
 

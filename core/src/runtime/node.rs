@@ -31,7 +31,7 @@ pub fn start(keypair: &Keypair, config: NodeConfig) -> Result<(NetClient, EventR
         SwarmConfig::with_tokio_executor()
             .with_idle_connection_timeout(config.idle_connection_timeout),
     );
-
+    
     // 创建 channels
     let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
