@@ -7,7 +7,6 @@ use libp2p::{
 };
 
 use crate::config::NodeConfig;
-use crate::error::Result;
 
 /// 核心网络行为
 ///
@@ -35,13 +34,16 @@ impl CoreBehaviour {
     ///
     /// # 参数
     /// - `keypair`: 节点密钥对，用于身份认证
-    /// - `relay_client`: 中继客户端行为（由 transport 层创建）
+    /// - `relay_client`: 中继客户端行为（由 SwarmBuilder 自动创建）
     /// - `config`: 节点配置
+    ///
+    /// # Panics
+    /// 如果 mDNS 初始化失败（极少见，通常表示系统级问题）
     pub fn new(
         keypair: &Keypair,
         relay_client: relay::client::Behaviour,
         config: &NodeConfig,
-    ) -> Result<Self> {
+    ) -> Self {
         let peer_id = keypair.public().to_peer_id();
 
         // ===== Ping =====
@@ -96,7 +98,7 @@ impl CoreBehaviour {
         // 局域网多播 DNS 发现
         // 自动发现同一局域网内的其他节点，无需引导节点
         let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
-            .map_err(|e| crate::error::Error::Behaviour(e.to_string()))?;
+            .expect("mDNS initialization failed");
 
         // ===== AutoNAT =====
         // 自动 NAT 类型检测
@@ -110,7 +112,7 @@ impl CoreBehaviour {
         // 通过中继连接协调打洞，实现 NAT 穿透后的直连
         let dcutr = dcutr::Behaviour::new(peer_id);
 
-        Ok(Self {
+        Self {
             ping,
             identify,
             kad,
@@ -118,6 +120,6 @@ impl CoreBehaviour {
             relay_client,
             autonat,
             dcutr,
-        })
+        }
     }
 }
