@@ -1,6 +1,6 @@
 use futures::StreamExt;
-use libp2p::{autonat, ping};
 use libp2p::swarm::SwarmEvent;
+use libp2p::{autonat, dcutr, ping};
 use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 
@@ -113,7 +113,24 @@ impl EventLoop {
                 num_established,
                 ..
             } if *num_established == 0 => Some(NodeEvent::PeerDisconnected { peer_id: *peer_id }),
-            SwarmEvent::ConnectionClosed { .. } => None,
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Dcutr(dcutr::Event {
+                remote_peer_id,
+                result,
+            })) => match result {
+                Ok(_connection_id) => {
+                    info!("DCUtR hole-punch succeeded with {}", remote_peer_id);
+                    Some(NodeEvent::HolePunchSucceeded {
+                        peer_id: *remote_peer_id,
+                    })
+                }
+                Err(e) => {
+                    warn!("DCUtR hole-punch failed with {}: {}", remote_peer_id, e);
+                    Some(NodeEvent::HolePunchFailed {
+                        peer_id: *remote_peer_id,
+                        error: e.to_string(),
+                    })
+                }
+            },
             SwarmEvent::Behaviour(CoreBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(
                 peers,
             ))) => {
@@ -149,16 +166,16 @@ impl EventLoop {
                             .kad
                             .add_address(peer_id, addr.clone());
                     }
-                    info!("Added peer {} to Kad (protocol: {})", peer_id, info.protocol_version);
+                    info!(
+                        "Added peer {} to Kad (protocol: {})",
+                        peer_id, info.protocol_version
+                    );
                 }
                 Some(NodeEvent::IdentifyReceived {
                     peer_id: *peer_id,
                     agent_version: info.agent_version.clone(),
                     protocol_version: info.protocol_version.clone(),
                 })
-            }
-            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(e))=>{
-                None
             }
             SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(autonat::Event::StatusChanged {
                 new,
@@ -169,8 +186,15 @@ impl EventLoop {
                     autonat::NatStatus::Private => (NatStatus::Private, None),
                     autonat::NatStatus::Unknown => (NatStatus::Unknown, None),
                 };
-                Some(NodeEvent::NatStatusChanged { status, public_addr })
+                Some(NodeEvent::NatStatusChanged {
+                    status,
+                    public_addr,
+                })
             }
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(e)) => {
+                
+                None
+            },
             _ => None,
         }
     }

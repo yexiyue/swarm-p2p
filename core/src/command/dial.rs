@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use libp2p::{swarm::SwarmEvent, PeerId};
+use libp2p::{PeerId, swarm::SwarmEvent};
 
 use crate::error::Error;
 use crate::runtime::CoreBehaviourEvent;
@@ -23,10 +23,7 @@ impl CommandHandler for DialCommand {
 
     async fn run(&mut self, swarm: &mut CoreSwarm, handle: &ResultHandle<Self::Result>) {
         if let Err(e) = swarm.dial(self.peer_id) {
-            handle.finish(Err(Error::Dial(format!(
-                "failed to dial {}: {}",
-                self.peer_id, e
-            ))));
+            handle.finish(Err(Error::Dial(e.to_string())));
         }
     }
 
@@ -45,10 +42,7 @@ impl CommandHandler for DialCommand {
                 error,
                 ..
             } if *peer_id == self.peer_id => {
-                handle.finish(Err(Error::Dial(format!(
-                    "failed to dial {}: {}",
-                    self.peer_id, error
-                ))));
+                handle.finish(Err(Error::Dial(error.to_string())));
                 false // 完成
             }
             _ => true, // 继续等待

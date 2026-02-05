@@ -63,4 +63,18 @@ pub enum NodeEvent {
         /// 如果是公网，返回外部地址
         public_addr: Option<Multiaddr>,
     },
+
+    /// DCUtR 打洞成功，连接已升级为直连
+    #[serde(rename_all = "camelCase")]
+    HolePunchSucceeded {
+        peer_id: PeerId,
+    },
+
+    /// DCUtR 打洞失败
+    #[serde(rename_all = "camelCase")]
+    HolePunchFailed {
+        peer_id: PeerId,
+        /// 失败原因
+        error: String,
+    },
 }
