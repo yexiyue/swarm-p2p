@@ -154,6 +154,9 @@ sequenceDiagram
 每个命令需要实现的接口：
 
 ```rust
+/// on_event 返回值：(keep_active, remaining_event)
+pub type OnEventResult<Req, Resp> = (bool, Option<SwarmEvent<CoreBehaviourEvent<Req, Resp>>>);
+
 #[async_trait]
 pub trait CommandHandler: Send + 'static {
     type Result: Send + 'static;
@@ -161,13 +164,15 @@ pub trait CommandHandler: Send + 'static {
     /// 执行命令（如：调用 swarm.dial）
     async fn run(&mut self, swarm: &mut CoreSwarm, handle: &ResultHandle<Self::Result>);
 
-    /// 处理 swarm 事件，返回 true 继续等待，false 完成
+    /// 处理 swarm 事件（owned），返回 (keep, Option<event>):
+    /// - keep: true 继续等待，false 命令完成
+    /// - Some(event): 不消费，传递给下一个命令；None: 事件被消费
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent>,
+        event: SwarmEvent<CoreBehaviourEvent>,
         handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        false  // 默认不等待事件
+    ) -> OnEventResult {
+        (false, Some(event))  // 默认不等待，不消费
     }
 }
 ```
@@ -189,19 +194,19 @@ impl CommandHandler for DialCommand {
         }
     }
 
-    async fn on_event(&mut self, event: &SwarmEvent<...>, handle: &ResultHandle<()>) -> bool {
-        match event {
+    async fn on_event(&mut self, event: SwarmEvent<...>, handle: &ResultHandle<()>) -> OnEventResult {
+        match &event {
             SwarmEvent::ConnectionEstablished { peer_id, .. }
                 if *peer_id == self.peer_id => {
-                handle.finish(Ok(())).await;
-                false  // 完成
+                handle.finish(Ok(()));
+                (false, Some(event))  // 完成，但不消费事件（前端需要 PeerConnected）
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. }
                 if peer_id == Some(self.peer_id) => {
-                handle.finish(Err(Error::Dial(...))).await;
-                false  // 完成
+                handle.finish(Err(Error::Dial(...)));
+                (false, Some(event))  // 完成，不消费
             }
-            _ => true  // 继续等待
+            _ => (true, Some(event))  // 继续等待，不消费
         }
     }
 }
@@ -283,13 +288,16 @@ flowchart TB
             PushActive["active_commands.push(cmd)"]
         end
 
-        subgraph EventBranch["事件分支"]
+        subgraph EventBranch["事件分支 — 责任链"]
             RecvEvent["swarm.select_next_some()"]
-            NotifyAll["遍历 active_commands"]
+            PassEvent["传递 owned event 给 cmd[i]"]
             OnEvent["cmd.on_event_boxed(event)"]
+            CheckConsumed{"event 被消费?"}
+            StopChain["停止传递"]
             CheckKeep{"keep?"}
             Remove["swap_remove(i)"]
-            Next["i += 1"]
+            Next["i += 1, 继续传递"]
+            Convert["convert_to_node_event(event)"]
         end
 
         Start --> Select
@@ -300,15 +308,22 @@ flowchart TB
         RunCmd --> PushActive
         PushActive --> Select
 
-        RecvEvent --> NotifyAll
-        NotifyAll --> OnEvent
+        RecvEvent --> PassEvent
+        PassEvent --> OnEvent
         OnEvent --> CheckKeep
         CheckKeep -->|false| Remove
         CheckKeep -->|true| Next
-        Remove --> NotifyAll
-        Next --> NotifyAll
+        Remove --> CheckConsumed
+        Next --> CheckConsumed
+        CheckConsumed -->|"None"| StopChain
+        CheckConsumed -->|"Some(event)"| PassEvent
+        StopChain --> Select
+        PassEvent -->|"遍历完成"| Convert
+        Convert --> Select
     end
 ```
+
+> **责任链模式**：事件以 owned 形式依次传递给 `active_commands` 中的每个命令。命令可以选择**消费**（返回 `None`，事件不再传递）或**传递**（返回 `Some(event)`，继续流转）。未被消费的事件最终进入 `convert_to_node_event` 转为前端事件。
 
 ## 数据流全景
 
@@ -366,26 +381,26 @@ classDiagram
         <<trait>>
         +Result
         +run(swarm, handle)
-        +on_event(event, handle) bool
+        +on_event(event, handle) OnEventResult
     }
 
     class DialCommand {
         +peer_id: PeerId
         +run()
-        +on_event() bool
+        +on_event() OnEventResult
     }
 
     class CloseCommand {
         +peer_id: PeerId
         +run()
-        +on_event() bool
+        +on_event() OnEventResult
     }
 
     class SendFileCommand {
         +file_path: PathBuf
         +target: PeerId
         +run()
-        +on_event() bool
+        +on_event() OnEventResult
     }
 
     CommandHandler <|.. DialCommand
@@ -415,11 +430,13 @@ flowchart LR
     B --> C["执行 run()"]
     C --> D["加入 active 列表"]
     D --> E["等待事件"]
-    E --> F{"on_event 返回"}
-    F -->|true| E
-    F -->|false| G["从列表移除"]
+    E --> F{"on_event 返回 (keep, event)"}
+    F -->|"keep=true"| E
+    F -->|"keep=false"| G["从列表移除"]
     G --> H["命令完成"]
 ```
+
+> `on_event` 返回 `(bool, Option<SwarmEvent>)`：`bool` 控制命令是否继续等待，`Option` 控制事件是否被消费。命令既可以消费事件（如 Kad 命令消费 `OutboundQueryProgressed`），也可以只处理但不消费（如 `DialCommand` 传递 `ConnectionEstablished` 给前端）。
 
 ## 对比其他方案
 

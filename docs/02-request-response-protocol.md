@@ -130,11 +130,15 @@ where
 }
 ```
 
-`SendRequestCommand` 的 `on_event` 需要匹配两种事件：
+`SendRequestCommand` 的 `on_event` 接收 owned event，匹配两种事件并**消费**它们（返回 `None`）：
 
 ```rust
-async fn on_event(&mut self, event: &SwarmEvent<...>, handle: &ResultHandle<Resp>) -> bool {
-    match event {
+async fn on_event(
+    &mut self,
+    event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+    handle: &ResultHandle<Resp>,
+) -> OnEventResult<Req, Resp> {
+    match &event {
         // 成功收到响应
         SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(Event::Message {
             peer,
@@ -144,7 +148,7 @@ async fn on_event(&mut self, event: &SwarmEvent<...>, handle: &ResultHandle<Resp
             && *peer == self.peer_id =>
         {
             handle.finish(Ok(response.clone()));
-            false  // 命令完成
+            (false, None)  // 消费事件，命令完成
         }
         // 发送失败
         SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(Event::OutboundFailure {
@@ -153,14 +157,14 @@ async fn on_event(&mut self, event: &SwarmEvent<...>, handle: &ResultHandle<Resp
             && *peer == self.peer_id =>
         {
             handle.finish(Err(Error::Behaviour(...)));
-            false  // 命令完成
+            (false, None)  // 消费事件，命令完成
         }
-        _ => true  // 继续等待
+        _ => (true, Some(event))  // 继续等待，不消费
     }
 }
 ```
 
-注意 `request_id` 的校验——同一时刻可能有多个 `SendRequestCommand` 在等待响应，每个只关心自己的 `request_id`。
+注意 `request_id` 的校验——同一时刻可能有多个 `SendRequestCommand` 在等待响应，每个只关心自己的 `request_id`。匹配到的事件会被消费（`None`），不会传递给其他命令或前端。
 
 ## 入站请求：核心设计挑战
 
@@ -336,84 +340,102 @@ where
 
 ### 第一阶段：EventLoop 接收并暂存
 
+事件流经**责任链**——先通过 `active_commands`，未被消费的事件再进入 `convert_to_node_event`：
+
 ```mermaid
 sequenceDiagram
     participant Remote as 远端节点
     participant Swarm as libp2p Swarm
     participant EL as EventLoop
+    participant Cmds as active_commands
     participant PM as PendingMap
     participant TX as event_tx
 
     Remote->>Swarm: 发送请求
     Swarm->>EL: SwarmEvent::Behaviour(ReqResp(Message::Request))
 
-    Note over EL: 先借用 &event 处理其他逻辑
-    EL->>EL: convert_to_node_event(&event)
-    EL->>EL: 通知 active_commands
+    Note over EL,Cmds: 责任链：依次传递 owned event
+    EL->>Cmds: cmd[0].on_event_boxed(event)
+    Cmds-->>EL: (keep, Some(event)) — 不消费，传递
+    EL->>Cmds: cmd[1].on_event_boxed(event)
+    Cmds-->>EL: (keep, Some(event)) — 不消费，传递
 
-    Note over EL: 然后消费 owned event 取出 channel
+    Note over EL: 剩余事件进入 convert_to_node_event（owned）
     EL->>EL: match event { Message::Request { request, channel, .. } }
     EL->>EL: pending_id = next_pending_id()
     EL->>PM: insert(pending_id, channel)
     EL->>TX: send(NodeEvent::InboundRequest { peer_id, pending_id, request })
 ```
 
-这里有一个重要的**借用与所有权技巧**：
+关键实现：
 
 ```rust
 async fn handle_swarm_event(&mut self, event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>) {
-    // ① 先以 &event（借用）通知 active_commands 和 convert_to_node_event
+    // 责任链：依次传递 owned event，命令可选择消费或传递
+    let mut remaining = Some(event);
     let mut i = 0;
     while i < self.active_commands.len() {
-        let keep = self.active_commands[i].on_event_boxed(&event).await;
+        let Some(event) = remaining.take() else {
+            break; // 事件已被消费，停止传递
+        };
+        let (keep, returned) = self.active_commands[i].on_event_boxed(event).await;
+        remaining = returned;
         if keep { i += 1; } else { self.active_commands.swap_remove(i); }
     }
-    let node_event = self.convert_to_node_event(&event);
 
-    // ② 再以 owned event 匹配，move 出 ResponseChannel
-    let node_event = match event {
+    // 未被命令消费的事件，转换为前端事件
+    let Some(event) = remaining else { return; };
+    if let Some(evt) = self.convert_to_node_event(event) {
+        let _ = self.event_tx.send(evt).await;
+    }
+}
+```
+
+`convert_to_node_event` 同样接收 owned event，直接在内部处理 InboundRequest：
+
+```rust
+fn convert_to_node_event(&mut self, event: SwarmEvent<...>) -> Option<NodeEvent<Req>> {
+    match event {
+        // ... 其他事件（ConnectionEstablished, Ping, Identify 等）...
         SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(ReqRespEvent::Message {
             peer,
             message: Message::Request { request, channel, .. },
             ..
         })) => {
             let pending_id = self.next_pending_id();
-            self.pending_channels.insert(pending_id, channel);  // move channel
+            self.pending_channels.insert(pending_id, channel);  // 直接 move
             Some(NodeEvent::InboundRequest { peer_id: peer, pending_id, request })
         }
-        _ => node_event,
-    };
-
-    if let Some(evt) = node_event {
-        let _ = self.event_tx.send(evt).await;
+        // ...
     }
 }
 ```
 
-**为什么要分两步？**
+**事件传递流程：**
 
 ```mermaid
 flowchart TB
-    subgraph Step1["步骤 ①：借用 &event"]
-        S1A["active_commands[i].on_event_boxed(&event)"]
-        S1B["convert_to_node_event(&event)"]
-    end
+    E["SwarmEvent (owned)"]
+    C1["cmd[0].on_event(event)"]
+    C2["cmd[1].on_event(event)"]
+    CN["..."]
+    Conv["convert_to_node_event(event)"]
+    FE["发送 NodeEvent 给前端"]
 
-    subgraph Step2["步骤 ②：消费 owned event"]
-        S2A["match event { ... }"]
-        S2B["move 出 ResponseChannel"]
-    end
+    E --> C1
+    C1 -->|"Some(event)"| C2
+    C1 -->|"None"| Stop1["事件被消费，停止"]
+    C2 -->|"Some(event)"| CN
+    C2 -->|"None"| Stop2["事件被消费，停止"]
+    CN -->|"Some(event)"| Conv
+    Conv --> FE
 
-    Step1 --> Step2
-
-    S1A -.- Note1["需要 &event 引用"]
-    S2B -.- Note2["需要 event 所有权<br/>因为 ResponseChannel 不可 Clone"]
-
-    style Note1 fill:#e1f5fe,stroke:none
-    style Note2 fill:#fff3e0,stroke:none
+    style Stop1 fill:#ffebee
+    style Stop2 fill:#ffebee
+    style FE fill:#e8f5e9
 ```
 
-`ResponseChannel` 不可 Clone，必须从 owned event 中 move 出来。但 `on_event_boxed` 和 `convert_to_node_event` 只需要 `&event` 引用。所以先借用完，再消费所有权。
+整个流程全程使用 owned event，无需借用与所有权分离的两步操作。`ResponseChannel`（不可 Clone）在 `convert_to_node_event` 中直接从 owned event move 出来，存入 `PendingMap`。
 
 ### 第二阶段：上层处理并回复
 
