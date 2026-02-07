@@ -5,7 +5,7 @@ use libp2p::PeerId;
 use tracing::{error, info};
 
 use crate::error::Error;
-use crate::runtime::CoreBehaviourEvent;
+use crate::runtime::{CborMessage, CoreBehaviourEvent};
 use crate::util::QueryStatsInfo;
 
 use super::super::{CommandHandler, CoreSwarm, ResultHandle};
@@ -38,10 +38,10 @@ impl GetClosestPeersCommand {
 }
 
 #[async_trait]
-impl CommandHandler for GetClosestPeersCommand {
+impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetClosestPeersCommand {
     type Result = GetClosestPeersResult;
 
-    async fn run(&mut self, swarm: &mut CoreSwarm, _handle: &ResultHandle<Self::Result>) {
+    async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, _handle: &ResultHandle<Self::Result>) {
         let query_id = swarm
             .behaviour_mut()
             .kad
@@ -51,7 +51,7 @@ impl CommandHandler for GetClosestPeersCommand {
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent>,
+        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> bool {
         // 只处理 Kademlia OutboundQueryProgressed 事件

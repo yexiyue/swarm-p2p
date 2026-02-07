@@ -4,7 +4,7 @@ use libp2p::swarm::SwarmEvent;
 use tracing::{error, info};
 
 use crate::error::Error;
-use crate::runtime::CoreBehaviourEvent;
+use crate::runtime::{CborMessage, CoreBehaviourEvent};
 use crate::util::QueryStatsInfo;
 
 use super::super::{CommandHandler, CoreSwarm, ResultHandle};
@@ -37,17 +37,17 @@ impl GetRecordCommand {
 }
 
 #[async_trait]
-impl CommandHandler for GetRecordCommand {
+impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecordCommand {
     type Result = GetRecordResult;
 
-    async fn run(&mut self, swarm: &mut CoreSwarm, _handle: &ResultHandle<Self::Result>) {
+    async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, _handle: &ResultHandle<Self::Result>) {
         let query_id = swarm.behaviour_mut().kad.get_record(self.key.clone());
         self.query_id = Some(query_id);
     }
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent>,
+        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> bool {
         // 只处理 Kademlia OutboundQueryProgressed 事件

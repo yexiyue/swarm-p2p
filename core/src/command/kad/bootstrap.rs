@@ -4,7 +4,7 @@ use libp2p::swarm::SwarmEvent;
 use tracing::{error, info};
 
 use crate::error::Error;
-use crate::runtime::CoreBehaviourEvent;
+use crate::runtime::{CborMessage, CoreBehaviourEvent};
 use crate::util::QueryStatsInfo;
 
 use super::super::{CommandHandler, CoreSwarm, ResultHandle};
@@ -40,10 +40,10 @@ impl Default for BootstrapCommand {
 }
 
 #[async_trait]
-impl CommandHandler for BootstrapCommand {
+impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for BootstrapCommand {
     type Result = BootstrapResult;
 
-    async fn run(&mut self, swarm: &mut CoreSwarm, handle: &ResultHandle<Self::Result>) {
+    async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, handle: &ResultHandle<Self::Result>) {
         match swarm.behaviour_mut().kad.bootstrap() {
             Ok(query_id) => {
                 self.query_id = Some(query_id);
@@ -60,7 +60,7 @@ impl CommandHandler for BootstrapCommand {
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent>,
+        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> bool {
         // 只处理 Kademlia OutboundQueryProgressed 事件

@@ -14,9 +14,12 @@ pub enum NatStatus {
 }
 
 /// 对外暴露的节点事件
+///
+/// 泛型参数 `Req` 是 request-response 协议的请求类型，
+/// 用于 `InboundRequest` 变体携带请求内容。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum NodeEvent {
+pub enum NodeEvent<Req = ()> {
     /// 开始监听某个地址
     Listening {
         addr: Multiaddr,
@@ -76,5 +79,15 @@ pub enum NodeEvent {
         peer_id: PeerId,
         /// 失败原因
         error: String,
+    },
+
+    /// 收到对端的 request-response 请求
+    #[serde(rename_all = "camelCase")]
+    InboundRequest {
+        peer_id: PeerId,
+        /// 用于回复的唯一标识（传回 `NetClient::send_response` 时使用）
+        pending_id: u64,
+        /// 请求内容
+        request: Req,
     },
 }

@@ -1,12 +1,28 @@
-use std::num::NonZeroUsize;
 use std::time::Duration;
+use std::{fmt::Debug, num::NonZeroUsize};
 
 use libp2p::{
-    autonat, dcutr, identify, identity::Keypair, kad, mdns, ping, relay, swarm::NetworkBehaviour,
-    StreamProtocol,
+    StreamProtocol, autonat, dcutr, identify, identity::Keypair, kad, mdns, ping, relay,
+    request_response, swarm::NetworkBehaviour,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::config::NodeConfig;
+
+/// CBOR 编码消息的 trait 约束
+///
+/// 用于 request-response 协议的请求和响应类型必须满足的条件：
+/// - `Serialize` + `Deserialize`: CBOR 编解码
+/// - `Send` + `Sync`: 跨线程传递
+/// - `'static`: 可被 tokio::spawn 使用
+pub trait CborMessage:
+    Debug + Clone + Serialize + Send + Sync + for<'a> Deserialize<'a> + 'static
+{
+}
+impl<T> CborMessage for T where
+    T: Debug + Clone + Serialize + Send + Sync + for<'a> Deserialize<'a> + 'static
+{
+}
 
 /// 核心网络行为
 ///
@@ -19,17 +35,26 @@ use crate::config::NodeConfig;
 /// - `autonat`: NAT 类型检测，判断是否需要中继/打洞
 /// - `dcutr`: 打洞协调，实现 NAT 穿透
 #[derive(NetworkBehaviour)]
-pub struct CoreBehaviour {
+pub struct CoreBehaviour<Req, Resp>
+where
+    Req: CborMessage,
+    Resp: CborMessage,
+{
     pub ping: ping::Behaviour,
     pub identify: identify::Behaviour,
     pub kad: kad::Behaviour<kad::store::MemoryStore>,
+    pub req_resp: request_response::cbor::Behaviour<Req, Resp>,
     pub mdns: mdns::tokio::Behaviour,
     pub relay_client: relay::client::Behaviour,
     pub autonat: autonat::Behaviour,
     pub dcutr: dcutr::Behaviour,
 }
 
-impl CoreBehaviour {
+impl<Req, Resp> CoreBehaviour<Req, Resp>
+where
+    Req: CborMessage,
+    Resp: CborMessage,
+{
     /// 创建核心网络行为
     ///
     /// # 参数
@@ -88,11 +113,8 @@ impl CoreBehaviour {
             .set_publication_interval(Some(Duration::from_secs(3600)))
             .set_provider_record_ttl(Some(Duration::from_secs(3600)));
 
-        let kad = kad::Behaviour::with_config(
-            peer_id,
-            kad::store::MemoryStore::new(peer_id),
-            kad_config,
-        );
+        let kad =
+            kad::Behaviour::with_config(peer_id, kad::store::MemoryStore::new(peer_id), kad_config);
 
         // ===== mDNS =====
         // 局域网多播 DNS 发现
@@ -112,6 +134,14 @@ impl CoreBehaviour {
         // 通过中继连接协调打洞，实现 NAT 穿透后的直连
         let dcutr = dcutr::Behaviour::new(peer_id);
 
+        let req_resp = request_response::cbor::Behaviour::new(
+            [(
+                StreamProtocol::new("/swarmdrop/1.0.0"),
+                request_response::ProtocolSupport::Full,
+            )],
+            request_response::Config::default(),
+        );
+
         Self {
             ping,
             identify,
@@ -120,6 +150,7 @@ impl CoreBehaviour {
             relay_client,
             autonat,
             dcutr,
+            req_resp,
         }
     }
 }

@@ -21,7 +21,8 @@ libp2p = { version = "0.56.0", features = [
     "autonat",
     "macros",
     "request-response",
-    "serde"
+    "serde",
+    "cbor"
 ] }
 tokio = "1.49.0"
 futures = "0.3.31"
@@ -32,6 +33,7 @@ anyhow = "1.0"
 tracing = "0.1.44"
 parking_lot = "0.12.5"
 async-trait = "0.1.89"
+dashmap = "6.1.0"
 
 [features]
 default = ["client"]

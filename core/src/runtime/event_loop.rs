@@ -1,28 +1,45 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use futures::StreamExt;
+use libp2p::request_response::{Event as ReqRespEvent, Message};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{autonat, dcutr, ping};
 use tokio::sync::mpsc;
-use tracing::{info, trace, warn};
+use tracing::{info, warn};
 
-use super::CoreBehaviourEvent;
+use super::{CborMessage, CoreBehaviourEvent};
 use crate::command::{Command, CoreSwarm};
 use crate::event::{NatStatus, NodeEvent};
+use crate::pending_map::PendingMap;
 
 /// 事件循环
-pub struct EventLoop {
-    swarm: CoreSwarm,
-    command_rx: mpsc::Receiver<Command>,
-    event_tx: mpsc::Sender<NodeEvent>,
-    active_commands: Vec<Command>,
+pub struct EventLoop<Req, Resp>
+where
+    Req: CborMessage,
+    Resp: CborMessage,
+{
+    swarm: CoreSwarm<Req, Resp>,
+    command_rx: mpsc::Receiver<Command<Req, Resp>>,
+    event_tx: mpsc::Sender<NodeEvent<Req>>,
+    active_commands: Vec<Command<Req, Resp>>,
     /// 本机的协议版本，用于判断是否加入 Kad
     protocol_version: String,
+    /// 暂存 inbound request 的 ResponseChannel，等待前端回复
+    pending_channels: PendingMap<u64, libp2p::request_response::ResponseChannel<Resp>>,
+    /// pending_id 自增计数器
+    pending_id_counter: AtomicU64,
 }
 
-impl EventLoop {
+impl<Req, Resp> EventLoop<Req, Resp>
+where
+    Req: CborMessage,
+    Resp: CborMessage,
+{
     pub fn new(
-        swarm: CoreSwarm,
-        command_rx: mpsc::Receiver<Command>,
-        event_tx: mpsc::Sender<NodeEvent>,
+        swarm: CoreSwarm<Req, Resp>,
+        command_rx: mpsc::Receiver<Command<Req, Resp>>,
+        event_tx: mpsc::Sender<NodeEvent<Req>>,
+        pending_channels: PendingMap<u64, libp2p::request_response::ResponseChannel<Resp>>,
         protocol_version: String,
     ) -> Self {
         Self {
@@ -31,6 +48,8 @@ impl EventLoop {
             event_tx,
             active_commands: Vec::new(),
             protocol_version,
+            pending_channels,
+            pending_id_counter: AtomicU64::new(0),
         }
     }
 
@@ -66,12 +85,12 @@ impl EventLoop {
         }
     }
 
-    async fn handle_command(&mut self, mut cmd: Command) {
+    async fn handle_command(&mut self, mut cmd: Command<Req, Resp>) {
         cmd.run_boxed(&mut self.swarm).await;
         self.active_commands.push(cmd);
     }
 
-    async fn handle_swarm_event(&mut self, event: SwarmEvent<CoreBehaviourEvent>) {
+    async fn handle_swarm_event(&mut self, event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>) {
         // 通知所有活跃命令
         let mut i = 0;
         while i < self.active_commands.len() {
@@ -83,19 +102,49 @@ impl EventLoop {
             }
         }
 
-        // 转换并发送对外事件
-        if let Some(node_event) = self.convert_to_node_event(&event) {
-            let _ = self.event_tx.send(node_event).await;
-        }
+        // 转换并发送对外事件（非 ReqResp 的事件）
+        let node_event = self.convert_to_node_event(&event);
 
-        trace!("Swarm event: {:?}", event);
+        // Inbound request 需要从 owned event 中取出 ResponseChannel（不可 Clone），
+        // 所以在 convert_to_node_event（借用）之后单独处理
+        let node_event = match event {
+            SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(ReqRespEvent::Message {
+                peer,
+                message:
+                    Message::Request {
+                        request, channel, ..
+                    },
+                ..
+            })) => {
+                let pending_id = self.next_pending_id();
+                info!(
+                    "Inbound request from {}, assigned pending_id={}",
+                    peer, pending_id
+                );
+                self.pending_channels.insert(pending_id, channel);
+                Some(NodeEvent::InboundRequest {
+                    peer_id: peer,
+                    pending_id,
+                    request,
+                })
+            }
+            _ => node_event,
+        };
+
+        if let Some(evt) = node_event {
+            let _ = self.event_tx.send(evt).await;
+        }
+    }
+
+    fn next_pending_id(&self) -> u64 {
+        self.pending_id_counter.fetch_add(1, Ordering::Relaxed)
     }
 
     /// 将 swarm 事件转换为对外事件
     fn convert_to_node_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent>,
-    ) -> Option<NodeEvent> {
+        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+    ) -> Option<NodeEvent<Req>> {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => Some(NodeEvent::Listening {
                 addr: address.clone(),
@@ -154,7 +203,6 @@ impl EventLoop {
                 peer_id: *peer,
                 rtt_ms: rtt.as_millis() as u64,
             }),
-            SwarmEvent::Behaviour(CoreBehaviourEvent::Ping(_)) => None,
             SwarmEvent::Behaviour(CoreBehaviourEvent::Identify(
                 libp2p::identify::Event::Received { peer_id, info, .. },
             )) => {
@@ -191,10 +239,6 @@ impl EventLoop {
                     public_addr,
                 })
             }
-            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(e)) => {
-                
-                None
-            },
             _ => None,
         }
     }

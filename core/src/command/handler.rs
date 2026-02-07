@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -7,10 +9,10 @@ use libp2p::Swarm;
 use libp2p::swarm::SwarmEvent;
 
 use crate::Result;
-use crate::runtime::{CoreBehaviour, CoreBehaviourEvent};
+use crate::runtime::{CborMessage, CoreBehaviour, CoreBehaviourEvent};
 
 /// Swarm 类型别名
-pub type CoreSwarm = Swarm<CoreBehaviour>;
+pub type CoreSwarm<Req, Resp> = Swarm<CoreBehaviour<Req, Resp>>;
 
 /// 命令结果句柄，用于命令完成时返回结果
 #[derive(Debug)]
@@ -64,16 +66,20 @@ impl<T> ResultHandle<T> {
 
 /// 命令处理器 trait
 #[async_trait]
-pub trait CommandHandler: Send + 'static {
+pub trait CommandHandler<Req, Resp>: Send + 'static
+where
+    Req: CborMessage,
+    Resp: CborMessage,
+{
     type Result: Send + 'static;
 
     /// 执行命令
-    async fn run(&mut self, swarm: &mut CoreSwarm, handle: &ResultHandle<Self::Result>);
+    async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, handle: &ResultHandle<Self::Result>);
 
     /// 处理 swarm 事件，返回 true 继续等待，false 完成
     async fn on_event(
         &mut self,
-        _event: &SwarmEvent<CoreBehaviourEvent>,
+        _event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         _handle: &ResultHandle<Self::Result>,
     ) -> bool {
         false
@@ -81,64 +87,83 @@ pub trait CommandHandler: Send + 'static {
 }
 
 /// 命令 trait object 包装
-pub type Command = Box<dyn CommandTrait + Send>;
+pub type Command<Req, Resp> = Box<dyn CommandTrait<Req, Resp> + Send>;
 
 /// 用于 trait object 的命令接口
 #[async_trait]
-pub trait CommandTrait: Send {
-    async fn run_boxed(&mut self, swarm: &mut CoreSwarm);
-    async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent>) -> bool;
+pub trait CommandTrait<Req, Resp>: Send
+where
+    Req: CborMessage,
+    Resp: CborMessage,
+{
+    async fn run_boxed(&mut self, swarm: &mut CoreSwarm<Req, Resp>);
+    async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>) -> bool;
 }
 
 /// 命令任务，包装 CommandHandler + ResultHandle
-pub struct CommandTask<T>
+pub struct CommandTask<T, Req, Resp>
 where
-    T: CommandHandler,
+    T: CommandHandler<Req, Resp>,
+    Req: CborMessage,
+    Resp: CborMessage,
 {
     handler: T,
     handle: ResultHandle<T::Result>,
+    _phantom: PhantomData<(Req, Resp)>,
 }
 
-impl<T> CommandTask<T>
+impl<T, Req, Resp> CommandTask<T, Req, Resp>
 where
-    T: CommandHandler,
+    T: CommandHandler<Req, Resp>,
+    Req: CborMessage,
+    Resp: CborMessage,
 {
     pub fn new(handler: T, handle: ResultHandle<T::Result>) -> Self {
-        Self { handler, handle }
+        Self {
+            handler,
+            handle,
+            _phantom: PhantomData,
+        }
     }
 }
 
 #[async_trait]
-impl<T> CommandTrait for CommandTask<T>
+impl<T, Req, Resp> CommandTrait<Req, Resp> for CommandTask<T, Req, Resp>
 where
-    T: CommandHandler + Send + 'static,
+    T: CommandHandler<Req, Resp> + Send + 'static,
     T::Result: Send + 'static,
+    Req: CborMessage,
+    Resp: CborMessage,
 {
-    async fn run_boxed(&mut self, swarm: &mut CoreSwarm) {
+    async fn run_boxed(&mut self, swarm: &mut CoreSwarm<Req, Resp>) {
         self.handler.run(swarm, &self.handle).await;
     }
 
-    async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent>) -> bool {
+    async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>) -> bool {
         self.handler.on_event(event, &self.handle).await
     }
 }
 
 /// 命令 Future，使任意 CommandHandler 可被 await
-pub struct CommandFuture<T>
+pub struct CommandFuture<T, Req, Resp>
 where
-    T: CommandHandler + Send + 'static,
+    T: CommandHandler<Req, Resp> + Send + 'static,
+    Req: CborMessage,
+    Resp: CborMessage,
 {
     handler: Option<T>,
     handle: ResultHandle<T::Result>,
-    sender: tokio::sync::mpsc::Sender<Command>,
+    sender: tokio::sync::mpsc::Sender<Command<Req, Resp>>,
 }
 
-impl<T> CommandFuture<T>
+impl<T, Req, Resp> CommandFuture<T, Req, Resp>
 where
-    T: CommandHandler + Send + 'static,
+    T: CommandHandler<Req, Resp> + Send + 'static,
     T::Result: Send + 'static,
+    Req: CborMessage,
+    Resp: CborMessage,
 {
-    pub fn new(handler: T, sender: tokio::sync::mpsc::Sender<Command>) -> Self {
+    pub fn new(handler: T, sender: tokio::sync::mpsc::Sender<Command<Req, Resp>>) -> Self {
         Self {
             handler: Some(handler),
             handle: ResultHandle::new(),
@@ -147,10 +172,12 @@ where
     }
 }
 
-impl<T> std::future::Future for CommandFuture<T>
+impl<T, Req, Resp> std::future::Future for CommandFuture<T, Req, Resp>
 where
-    T: CommandHandler + Send + Unpin + 'static,
+    T: CommandHandler<Req, Resp> + Send + Unpin + 'static,
     T::Result: Send + 'static,
+    Req: CborMessage,
+    Resp: CborMessage,
 {
     type Output = Result<T::Result>;
 
