@@ -78,3 +78,65 @@ where
         self.inner.lock().is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn insert_and_take() {
+        let map = PendingMap::new(Duration::from_secs(60));
+        map.insert(1u64, "hello");
+        map.insert(2, "world");
+
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.take(&1), Some("hello"));
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.take(&1), None); // 已经取出，不能再取
+    }
+
+    #[tokio::test]
+    async fn take_nonexistent_returns_none() {
+        let map = PendingMap::<u64, String>::new(Duration::from_secs(60));
+        assert_eq!(map.take(&999), None);
+        assert!(map.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clone_shares_state() {
+        let map = PendingMap::new(Duration::from_secs(60));
+        let map2 = map.clone();
+
+        map.insert(1u64, "value");
+        assert_eq!(map2.take(&1), Some("value")); // clone 共享底层数据
+        assert!(map.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ttl_expiry_cleans_up() {
+        // TTL = 1ms，后台清理任务的首次 tick 立即执行
+        // sleep 后让出执行权，清理任务会移除过期条目
+        let map = PendingMap::new(Duration::from_millis(1));
+        map.insert(1u64, "ephemeral");
+        assert_eq!(map.len(), 1);
+
+        // 等待超过 TTL，并让出执行权给清理任务
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
+
+        // 过期条目应被后台任务清理
+        assert!(map.is_empty(), "expired entry should be cleaned up");
+    }
+
+    #[tokio::test]
+    async fn non_expired_entries_survive_cleanup() {
+        // TTL 足够长，条目不会被清理
+        let map = PendingMap::new(Duration::from_secs(60));
+        map.insert(1u64, "durable");
+
+        tokio::task::yield_now().await;
+
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.take(&1), Some("durable"));
+    }
+}

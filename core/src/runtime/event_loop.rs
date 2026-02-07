@@ -63,6 +63,22 @@ where
         Ok(())
     }
 
+    /// 连接引导节点：注册地址到 Kad 路由表并 dial
+    pub fn connect_bootstrap_peers(
+        &mut self,
+        peers: &[(libp2p::PeerId, libp2p::Multiaddr)],
+    ) {
+        for (peer_id, addr) in peers {
+            self.swarm.behaviour_mut().kad.add_address(peer_id, addr.clone());
+            self.swarm.add_peer_address(*peer_id, addr.clone());
+            if let Err(e) = self.swarm.dial(*peer_id) {
+                warn!("Failed to dial bootstrap peer {}: {}", peer_id, e);
+            } else {
+                info!("Dialing bootstrap peer {} at {}", peer_id, addr);
+            }
+        }
+    }
+
     /// 运行事件循环
     pub async fn run(mut self) {
         loop {
@@ -127,9 +143,9 @@ where
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
     ) -> Option<NodeEvent<Req>> {
         match event {
-            SwarmEvent::NewListenAddr { address, .. } => Some(NodeEvent::Listening {
-                addr: address,
-            }),
+            SwarmEvent::NewListenAddr { address, .. } => {
+                Some(NodeEvent::Listening { addr: address })
+            }
             // 只在第一个连接建立时通知（peer 级别聚合）
             SwarmEvent::ConnectionEstablished {
                 peer_id,
@@ -185,9 +201,17 @@ where
             SwarmEvent::Behaviour(CoreBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(
                 peers,
             ))) => {
-                for (peer_id, _addr) in &peers {
-                    // 避免重复连接
+                // 先注册所有地址，再 dial（dial by PeerId 会使用所有已知地址）
+                for (peer_id, addr) in &peers {
+                    self.swarm.add_peer_address(*peer_id, addr.clone());
+                }
+
+                let dialed: std::collections::HashSet<_> =
+                    peers.iter().map(|(id, _)| *id).collect();
+
+                for peer_id in &dialed {
                     if !self.swarm.is_connected(peer_id) {
+                        info!("mDNS: dialing peer {}", peer_id);
                         if let Err(e) = self.swarm.dial(*peer_id) {
                             warn!("Failed to dial discovered peer {}: {}", peer_id, e);
                         }

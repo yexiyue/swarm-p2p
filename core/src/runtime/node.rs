@@ -67,6 +67,11 @@ where
     // 启动监听
     event_loop.start_listen(&config.listen_addrs)?;
 
+    // 连接引导节点
+    if !config.bootstrap_peers.is_empty() {
+        event_loop.connect_bootstrap_peers(&config.bootstrap_peers);
+    }
+
     // 启动 event loop
     tokio::spawn(event_loop.run());
 

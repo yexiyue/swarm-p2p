@@ -47,17 +47,16 @@ where
         // 首次 poll 时发送命令
         if let Some(handler) = this.handler.take() {
             let task = CommandTask::new(handler, this.handle.clone());
-            match this.sender.try_send(Box::new(task)) {
-                Ok(_) => return Poll::Pending,
-                Err(_) => {
-                    return Poll::Ready(Err(crate::error::Error::Behaviour(
-                        "command channel closed".into(),
-                    )));
-                }
+            if this.sender.try_send(Box::new(task)).is_err() {
+                return Poll::Ready(Err(crate::error::Error::Behaviour(
+                    "command channel closed".into(),
+                )));
             }
         }
 
-        // 后续 poll 检查结果
+        // 注册 waker 并检查结果
+        // 必须在首次 poll 时也注册 waker，否则同步完成的命令（如 stop_provide）
+        // 会在 handle.finish() 时找不到 waker，导致 Future 永远不会被唤醒
         this.handle.poll(cx)
     }
 }

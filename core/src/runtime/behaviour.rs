@@ -113,8 +113,16 @@ where
             .set_publication_interval(Some(Duration::from_secs(3600)))
             .set_provider_record_ttl(Some(Duration::from_secs(3600)));
 
-        let kad =
+        let mut kad =
             kad::Behaviour::with_config(peer_id, kad::store::MemoryStore::new(peer_id), kad_config);
+
+        // 默认 Kad 模式由 AutoNAT 自动判定（确认公网可达后才切 Server）。
+        // 若 AutoNAT 未确认或处于 NAT 后，节点会停留在 Client 模式，
+        // 不响应 DHT 查询，导致 put_record 等操作因 QuorumFailed 失败。
+        // 在已知可达的场景（如测试、引导节点）可强制设为 Server。
+        if config.kad_server_mode {
+            kad.set_mode(Some(kad::Mode::Server));
+        }
 
         // ===== mDNS =====
         // 局域网多播 DNS 发现
@@ -136,7 +144,8 @@ where
 
         let req_resp = request_response::cbor::Behaviour::new(
             [(
-                StreamProtocol::new("/swarmdrop/1.0.0"),
+                StreamProtocol::try_from_owned(config.req_resp_protocol.clone())
+                    .expect("invalid req_resp_protocol"),
                 request_response::ProtocolSupport::Full,
             )],
             request_response::Config::default(),
