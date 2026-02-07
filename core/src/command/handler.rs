@@ -8,7 +8,6 @@ use std::task::{Context, Poll, Waker};
 use libp2p::Swarm;
 use libp2p::swarm::SwarmEvent;
 
-use crate::Result;
 use crate::runtime::{CborMessage, CoreBehaviour, CoreBehaviourEvent};
 
 /// Swarm 类型别名
@@ -20,7 +19,7 @@ pub struct ResultHandle<T>(Arc<Mutex<ResultState<T>>>);
 
 #[derive(Debug)]
 struct ResultState<T> {
-    result: Option<Result<T>>,
+    result: Option<crate::Result<T>>,
     waker: Option<Waker>,
 }
 
@@ -44,7 +43,7 @@ impl<T> ResultHandle<T> {
         Self(Arc::new(Mutex::new(ResultState::default())))
     }
 
-    pub fn poll(&self, cx: &Context<'_>) -> Poll<Result<T>> {
+    pub fn poll(&self, cx: &Context<'_>) -> Poll<crate::Result<T>> {
         let mut state = self.0.lock();
         if let Some(result) = state.result.take() {
             Poll::Ready(result)
@@ -55,7 +54,7 @@ impl<T> ResultHandle<T> {
     }
 
     /// 完成命令并返回结果
-    pub fn finish(&self, result: Result<T>) {
+    pub fn finish(&self, result: crate::Result<T>) {
         let mut state = self.0.lock();
         state.result = Some(result);
         if let Some(waker) = state.waker.take() {
@@ -141,63 +140,5 @@ where
 
     async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>) -> bool {
         self.handler.on_event(event, &self.handle).await
-    }
-}
-
-/// 命令 Future，使任意 CommandHandler 可被 await
-pub struct CommandFuture<T, Req, Resp>
-where
-    T: CommandHandler<Req, Resp> + Send + 'static,
-    Req: CborMessage,
-    Resp: CborMessage,
-{
-    handler: Option<T>,
-    handle: ResultHandle<T::Result>,
-    sender: tokio::sync::mpsc::Sender<Command<Req, Resp>>,
-}
-
-impl<T, Req, Resp> CommandFuture<T, Req, Resp>
-where
-    T: CommandHandler<Req, Resp> + Send + 'static,
-    T::Result: Send + 'static,
-    Req: CborMessage,
-    Resp: CborMessage,
-{
-    pub fn new(handler: T, sender: tokio::sync::mpsc::Sender<Command<Req, Resp>>) -> Self {
-        Self {
-            handler: Some(handler),
-            handle: ResultHandle::new(),
-            sender,
-        }
-    }
-}
-
-impl<T, Req, Resp> std::future::Future for CommandFuture<T, Req, Resp>
-where
-    T: CommandHandler<Req, Resp> + Send + Unpin + 'static,
-    T::Result: Send + 'static,
-    Req: CborMessage,
-    Resp: CborMessage,
-{
-    type Output = Result<T::Result>;
-
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        // 首次 poll 时发送命令
-        if let Some(handler) = this.handler.take() {
-            let task = CommandTask::new(handler, this.handle.clone());
-            match this.sender.try_send(Box::new(task)) {
-                Ok(_) => return Poll::Pending,
-                Err(_) => {
-                    return Poll::Ready(Err(crate::error::Error::Behaviour(
-                        "command channel closed".into(),
-                    )));
-                }
-            }
-        }
-
-        // 后续 poll 检查结果
-        this.handle.poll(cx)
     }
 }

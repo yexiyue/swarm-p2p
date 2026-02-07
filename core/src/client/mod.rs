@@ -1,3 +1,4 @@
+mod future;
 mod kad;
 mod req_resp;
 
@@ -5,7 +6,8 @@ use libp2p::PeerId;
 use tokio::sync::mpsc;
 
 use crate::Result;
-use crate::command::{Command, CommandFuture, DialCommand};
+use crate::command::{Command, DialCommand};
+use future::CommandFuture;
 use crate::event::NodeEvent;
 use crate::pending_map::PendingMap;
 use crate::runtime::CborMessage;

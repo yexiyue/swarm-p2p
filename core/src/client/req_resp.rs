@@ -1,7 +1,8 @@
 use libp2p::PeerId;
 
+use super::future::CommandFuture;
 use crate::Result;
-use crate::command::{CommandFuture, SendRequestCommand, SendResponseCommand};
+use crate::command::{SendRequestCommand, SendResponseCommand};
 use crate::runtime::CborMessage;
 
 use super::NetClient;
@@ -28,12 +29,12 @@ where
     where
         Resp: Unpin,
     {
-        let channel = self
-            .pending_channels
-            .take(&pending_id)
-            .ok_or_else(|| crate::error::Error::Behaviour(
-                format!("No pending channel for pending_id={} (expired or already responded)", pending_id),
-            ))?;
+        let channel = self.pending_channels.take(&pending_id).ok_or_else(|| {
+            crate::error::Error::Behaviour(format!(
+                "No pending channel for pending_id={} (expired or already responded)",
+                pending_id
+            ))
+        })?;
         let cmd = SendResponseCommand::new(channel, response);
         CommandFuture::new(cmd, self.command_tx.clone()).await
     }

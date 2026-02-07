@@ -2,11 +2,11 @@ use libp2p::kad::{Record, RecordKey};
 
 use crate::Result;
 use crate::command::{
-    BootstrapCommand, BootstrapResult, CommandFuture, GetClosestPeersCommand,
-    GetClosestPeersResult, GetProvidersCommand, GetProvidersResult, GetRecordCommand,
-    GetRecordResult, PutRecordCommand, RemoveRecordCommand, StartProvideCommand,
-    StopProvideCommand,
+    BootstrapCommand, BootstrapResult, GetClosestPeersCommand, GetClosestPeersResult,
+    GetProvidersCommand, GetProvidersResult, GetRecordCommand, GetRecordResult, PutRecordCommand,
+    RemoveRecordCommand, StartProvideCommand, StopProvideCommand,
 };
+use super::future::CommandFuture;
 use crate::runtime::CborMessage;
 use crate::util::QueryStatsInfo;
 
