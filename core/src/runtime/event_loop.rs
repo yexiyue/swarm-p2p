@@ -91,10 +91,15 @@ where
     }
 
     async fn handle_swarm_event(&mut self, event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>) {
-        // 通知所有活跃命令
+        // 命令链：依次传递 owned event，命令可选择消费或传递
+        let mut remaining = Some(event);
         let mut i = 0;
         while i < self.active_commands.len() {
-            let keep = self.active_commands[i].on_event_boxed(&event).await;
+            let Some(event) = remaining.take() else {
+                break; // 事件已被消费，后续命令不再处理
+            };
+            let (keep, returned) = self.active_commands[i].on_event_boxed(event).await;
+            remaining = returned;
             if keep {
                 i += 1;
             } else {
@@ -102,12 +107,43 @@ where
             }
         }
 
-        // 转换并发送对外事件（非 ReqResp 的事件）
-        let node_event = self.convert_to_node_event(&event);
+        // 未被命令消费的事件，转换为前端事件
+        let Some(event) = remaining else {
+            return;
+        };
 
-        // Inbound request 需要从 owned event 中取出 ResponseChannel（不可 Clone），
-        // 所以在 convert_to_node_event（借用）之后单独处理
-        let node_event = match event {
+        if let Some(evt) = self.convert_to_node_event(event) {
+            let _ = self.event_tx.send(evt).await;
+        }
+    }
+
+    fn next_pending_id(&self) -> u64 {
+        self.pending_id_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// 将 swarm 事件转换为对外事件
+    fn convert_to_node_event(
+        &mut self,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+    ) -> Option<NodeEvent<Req>> {
+        match event {
+            SwarmEvent::NewListenAddr { address, .. } => Some(NodeEvent::Listening {
+                addr: address,
+            }),
+            // 只在第一个连接建立时通知（peer 级别聚合）
+            SwarmEvent::ConnectionEstablished {
+                peer_id,
+                num_established,
+                ..
+            } if num_established.get() == 1 => Some(NodeEvent::PeerConnected { peer_id }),
+            SwarmEvent::ConnectionEstablished { .. } => None,
+            // 只在最后一个连接关闭时通知（peer 级别聚合）
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            } if num_established == 0 => Some(NodeEvent::PeerDisconnected { peer_id }),
+            // Inbound request: 取出 ResponseChannel 暂存，通知前端
             SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(ReqRespEvent::Message {
                 peer,
                 message:
@@ -128,40 +164,6 @@ where
                     request,
                 })
             }
-            _ => node_event,
-        };
-
-        if let Some(evt) = node_event {
-            let _ = self.event_tx.send(evt).await;
-        }
-    }
-
-    fn next_pending_id(&self) -> u64 {
-        self.pending_id_counter.fetch_add(1, Ordering::Relaxed)
-    }
-
-    /// 将 swarm 事件转换为对外事件
-    fn convert_to_node_event(
-        &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
-    ) -> Option<NodeEvent<Req>> {
-        match event {
-            SwarmEvent::NewListenAddr { address, .. } => Some(NodeEvent::Listening {
-                addr: address.clone(),
-            }),
-            // 只在第一个连接建立时通知（peer 级别聚合）
-            SwarmEvent::ConnectionEstablished {
-                peer_id,
-                num_established,
-                ..
-            } if num_established.get() == 1 => Some(NodeEvent::PeerConnected { peer_id: *peer_id }),
-            SwarmEvent::ConnectionEstablished { .. } => None,
-            // 只在最后一个连接关闭时通知（peer 级别聚合）
-            SwarmEvent::ConnectionClosed {
-                peer_id,
-                num_established,
-                ..
-            } if *num_established == 0 => Some(NodeEvent::PeerDisconnected { peer_id: *peer_id }),
             SwarmEvent::Behaviour(CoreBehaviourEvent::Dcutr(dcutr::Event {
                 remote_peer_id,
                 result,
@@ -169,13 +171,13 @@ where
                 Ok(_connection_id) => {
                     info!("DCUtR hole-punch succeeded with {}", remote_peer_id);
                     Some(NodeEvent::HolePunchSucceeded {
-                        peer_id: *remote_peer_id,
+                        peer_id: remote_peer_id,
                     })
                 }
                 Err(e) => {
                     warn!("DCUtR hole-punch failed with {}: {}", remote_peer_id, e);
                     Some(NodeEvent::HolePunchFailed {
-                        peer_id: *remote_peer_id,
+                        peer_id: remote_peer_id,
                         error: e.to_string(),
                     })
                 }
@@ -183,7 +185,7 @@ where
             SwarmEvent::Behaviour(CoreBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(
                 peers,
             ))) => {
-                for (peer_id, _addr) in peers {
+                for (peer_id, _addr) in &peers {
                     // 避免重复连接
                     if !self.swarm.is_connected(peer_id) {
                         if let Err(e) = self.swarm.dial(*peer_id) {
@@ -191,16 +193,14 @@ where
                         }
                     }
                 }
-                Some(NodeEvent::PeersDiscovered {
-                    peers: peers.iter().map(|(p, a)| (*p, a.clone())).collect(),
-                })
+                Some(NodeEvent::PeersDiscovered { peers })
             }
             SwarmEvent::Behaviour(CoreBehaviourEvent::Ping(ping::Event {
                 peer,
                 result: Ok(rtt),
                 ..
             })) => Some(NodeEvent::PingSuccess {
-                peer_id: *peer,
+                peer_id: peer,
                 rtt_ms: rtt.as_millis() as u64,
             }),
             SwarmEvent::Behaviour(CoreBehaviourEvent::Identify(
@@ -212,7 +212,7 @@ where
                         self.swarm
                             .behaviour_mut()
                             .kad
-                            .add_address(peer_id, addr.clone());
+                            .add_address(&peer_id, addr.clone());
                     }
                     info!(
                         "Added peer {} to Kad (protocol: {})",
@@ -220,9 +220,9 @@ where
                     );
                 }
                 Some(NodeEvent::IdentifyReceived {
-                    peer_id: *peer_id,
-                    agent_version: info.agent_version.clone(),
-                    protocol_version: info.protocol_version.clone(),
+                    peer_id,
+                    agent_version: info.agent_version,
+                    protocol_version: info.protocol_version,
                 })
             }
             SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(autonat::Event::StatusChanged {
@@ -230,7 +230,7 @@ where
                 ..
             })) => {
                 let (status, public_addr) = match new {
-                    autonat::NatStatus::Public(addr) => (NatStatus::Public, Some(addr.clone())),
+                    autonat::NatStatus::Public(addr) => (NatStatus::Public, Some(addr)),
                     autonat::NatStatus::Private => (NatStatus::Private, None),
                     autonat::NatStatus::Unknown => (NatStatus::Unknown, None),
                 };

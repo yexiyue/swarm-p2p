@@ -7,7 +7,7 @@ use tracing::{error, info};
 use crate::error::Error;
 use crate::runtime::{CborMessage, CoreBehaviourEvent};
 
-use super::super::{CommandHandler, CoreSwarm, ResultHandle};
+use super::super::{CommandHandler, CoreSwarm, OnEventResult, ResultHandle};
 
 pub struct SendRequestCommand<Req>
 where
@@ -56,10 +56,10 @@ where
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        match event {
+    ) -> OnEventResult<Req, Resp> {
+        match &event {
             // 收到响应
             SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(Event::Message {
                 peer,
@@ -72,7 +72,7 @@ where
             })) if self.request_id.as_ref() == Some(request_id) && *peer == self.peer_id => {
                 info!("Received response from {}", peer);
                 handle.finish(Ok(response.clone()));
-                false // 完成
+                (false, None) // 消费，完成
             }
             // 发送失败
             SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(Event::OutboundFailure {
@@ -86,9 +86,9 @@ where
                     "Request to {} failed: {:?}",
                     peer, error
                 ))));
-                false // 完成
+                (false, None) // 消费，完成
             }
-            _ => true, // 继续等待
+            _ => (true, Some(event)), // 继续等待
         }
     }
 }

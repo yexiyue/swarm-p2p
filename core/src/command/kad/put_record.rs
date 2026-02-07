@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::runtime::{CborMessage, CoreBehaviourEvent};
 use crate::util::QueryStatsInfo;
 
-use super::super::{CommandHandler, CoreSwarm, ResultHandle};
+use super::super::{CommandHandler, CoreSwarm, OnEventResult, ResultHandle};
 
 pub struct PutRecordCommand {
     record: Record,
@@ -46,49 +46,45 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for PutRecor
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        // 只处理 Kademlia OutboundQueryProgressed 事件
-        let SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
-            id,
-            result: kad::QueryResult::PutRecord(res),
-            stats,
-            step,
-        })) = event
-        else {
-            return true; // 继续等待
-        };
+    ) -> OnEventResult<Req, Resp> {
+        match &event {
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
+                kad::Event::OutboundQueryProgressed {
+                    id,
+                    result: kad::QueryResult::PutRecord(res),
+                    stats,
+                    step,
+                },
+            )) if self.query_id == Some(*id) => {
+                // 累积统计
+                self.stats = Some(match self.stats.take() {
+                    Some(s) => s.merge(stats.clone()),
+                    None => stats.clone(),
+                });
 
-        // 检查是否是我们的查询
-        if self.query_id != Some(*id) {
-            return true;
-        }
+                // 非最后一步，继续等待
+                if !step.last {
+                    return (true, None); // 消费，继续等待
+                }
 
-        // 累积统计
-        self.stats = Some(match self.stats.take() {
-            Some(s) => s.merge(stats.clone()),
-            None => stats.clone(),
-        });
+                // 查询完成，处理结果
+                let stats_info = QueryStatsInfo::from(self.stats.as_ref().unwrap());
+                match res {
+                    Ok(_) => {
+                        info!("PutRecord success: {:?}", stats_info);
+                        handle.finish(Ok(stats_info));
+                    }
+                    Err(e) => {
+                        error!("PutRecord error: {:?}", e);
+                        handle.finish(Err(Error::KadPutRecord(format!("{:?}", e))));
+                    }
+                }
 
-        // 非最后一步，继续等待
-        if !step.last {
-            return true;
-        }
-
-        // 查询完成，处理结果
-        let stats_info = QueryStatsInfo::from(self.stats.as_ref().unwrap());
-        match res {
-            Ok(_) => {
-                info!("PutRecord success: {:?}", stats_info);
-                handle.finish(Ok(stats_info));
+                (false, None) // 消费，完成
             }
-            Err(e) => {
-                error!("PutRecord error: {:?}", e);
-                handle.finish(Err(Error::KadPutRecord(format!("{:?}", e))));
-            }
+            _ => (true, Some(event)), // 继续等待
         }
-
-        false // 完成
     }
 }

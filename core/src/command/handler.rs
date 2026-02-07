@@ -13,6 +13,14 @@ use crate::runtime::{CborMessage, CoreBehaviour, CoreBehaviourEvent};
 /// Swarm 类型别名
 pub type CoreSwarm<Req, Resp> = Swarm<CoreBehaviour<Req, Resp>>;
 
+/// on_event 返回值：(keep_active, remaining_event)
+///
+/// - `keep_active`: 命令是否继续留在 active_commands 中等待后续事件
+/// - `remaining_event`:
+///   - `None` — 事件已被该命令消费，不再传递
+///   - `Some(event)` — 事件未消费，传递给下一个命令或 convert_to_node_event
+pub type OnEventResult<Req, Resp> = (bool, Option<SwarmEvent<CoreBehaviourEvent<Req, Resp>>>);
+
 /// 命令结果句柄，用于命令完成时返回结果
 #[derive(Debug)]
 pub struct ResultHandle<T>(Arc<Mutex<ResultState<T>>>);
@@ -64,6 +72,10 @@ impl<T> ResultHandle<T> {
 }
 
 /// 命令处理器 trait
+///
+/// `on_event` 接收 owned event，命令可选择消费或传递：
+/// - 消费：返回 `(keep, None)`，事件不再传递给后续命令和前端
+/// - 传递：返回 `(keep, Some(event))`，事件继续流转
 #[async_trait]
 pub trait CommandHandler<Req, Resp>: Send + 'static
 where
@@ -75,13 +87,17 @@ where
     /// 执行命令
     async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, handle: &ResultHandle<Self::Result>);
 
-    /// 处理 swarm 事件，返回 true 继续等待，false 完成
+    /// 处理 swarm 事件
+    ///
+    /// 返回 `(keep_active, remaining_event)`：
+    /// - `keep_active`: true 继续等待后续事件，false 命令完成
+    /// - `remaining_event`: None 表示已消费，Some 表示传递给下一个处理者
     async fn on_event(
         &mut self,
-        _event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         _handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        false
+    ) -> OnEventResult<Req, Resp> {
+        (false, Some(event))
     }
 }
 
@@ -96,7 +112,10 @@ where
     Resp: CborMessage,
 {
     async fn run_boxed(&mut self, swarm: &mut CoreSwarm<Req, Resp>);
-    async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>) -> bool;
+    async fn on_event_boxed(
+        &mut self,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+    ) -> OnEventResult<Req, Resp>;
 }
 
 /// 命令任务，包装 CommandHandler + ResultHandle
@@ -138,7 +157,10 @@ where
         self.handler.run(swarm, &self.handle).await;
     }
 
-    async fn on_event_boxed(&mut self, event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>) -> bool {
+    async fn on_event_boxed(
+        &mut self,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+    ) -> OnEventResult<Req, Resp> {
         self.handler.on_event(event, &self.handle).await
     }
 }

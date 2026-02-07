@@ -4,7 +4,7 @@ use libp2p::{PeerId, swarm::SwarmEvent};
 use crate::error::Error;
 use crate::runtime::{CborMessage, CoreBehaviourEvent};
 
-use super::{CommandHandler, CoreSwarm, ResultHandle};
+use super::{CommandHandler, CoreSwarm, OnEventResult, ResultHandle};
 
 /// Dial 命令 - 连接到指定 peer
 pub struct DialCommand {
@@ -29,13 +29,13 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for DialComm
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        match event {
+    ) -> OnEventResult<Req, Resp> {
+        match &event {
             SwarmEvent::ConnectionEstablished { peer_id, .. } if *peer_id == self.peer_id => {
                 handle.finish(Ok(()));
-                false // 完成
+                (false, Some(event)) // 不消费，前端需要 PeerConnected
             }
             SwarmEvent::OutgoingConnectionError {
                 peer_id: Some(peer_id),
@@ -43,9 +43,9 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for DialComm
                 ..
             } if *peer_id == self.peer_id => {
                 handle.finish(Err(Error::Dial(error.to_string())));
-                false // 完成
+                (false, Some(event)) // 不消费
             }
-            _ => true, // 继续等待
+            _ => (true, Some(event)), // 继续等待
         }
     }
 }

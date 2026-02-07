@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::runtime::{CborMessage, CoreBehaviourEvent};
 use crate::util::QueryStatsInfo;
 
-use super::super::{CommandHandler, CoreSwarm, ResultHandle};
+use super::super::{CommandHandler, CoreSwarm, OnEventResult, ResultHandle};
 
 /// Bootstrap 命令结果
 #[derive(Debug, Clone)]
@@ -60,69 +60,68 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        // 只处理 Kademlia OutboundQueryProgressed 事件
-        let SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
-            id,
-            result: kad::QueryResult::Bootstrap(res),
-            stats,
-            step,
-        })) = event
-        else {
-            return true; // 继续等待
-        };
+    ) -> OnEventResult<Req, Resp> {
+        match &event {
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
+                kad::Event::OutboundQueryProgressed {
+                    id,
+                    result: kad::QueryResult::Bootstrap(res),
+                    stats,
+                    step,
+                },
+            )) if self.query_id == Some(*id) => {
+                // 累积统计
+                self.stats = Some(match self.stats.take() {
+                    Some(s) => s.merge(stats.clone()),
+                    None => stats.clone(),
+                });
 
-        // 检查是否是我们的查询
-        if self.query_id != Some(*id) {
-            return true;
-        }
+                // 处理结果
+                match res {
+                    Ok(kad::BootstrapOk {
+                        peer,
+                        num_remaining,
+                    }) => {
+                        info!(
+                            "Bootstrap progress: peer {:?}, {} remaining",
+                            peer, num_remaining
+                        );
+                    }
+                    Err(e) => {
+                        error!("Bootstrap error: {:?}", e);
+                        handle.finish(Err(Error::Behaviour(format!(
+                            "Bootstrap error: {:?}",
+                            e
+                        ))));
+                        return (false, None); // 消费，完成
+                    }
+                }
 
-        // 累积统计
-        self.stats = Some(match self.stats.take() {
-            Some(s) => s.merge(stats.clone()),
-            None => stats.clone(),
-        });
+                // 非最后一步，继续等待
+                if !step.last {
+                    return (true, None); // 消费，继续等待
+                }
 
-        // 处理结果
-        match res {
-            Ok(kad::BootstrapOk {
-                peer,
-                num_remaining,
-            }) => {
-                info!(
-                    "Bootstrap progress: peer {:?}, {} remaining",
-                    peer, num_remaining
-                );
+                // Bootstrap 完成
+                let stats_info = QueryStatsInfo::from(self.stats.as_ref().unwrap());
+                info!("Bootstrap completed: {:?}", stats_info);
+
+                // 获取最后一次的 num_remaining
+                let num_remaining = match res {
+                    Ok(kad::BootstrapOk { num_remaining, .. }) => *num_remaining,
+                    Err(_) => 0,
+                };
+
+                handle.finish(Ok(BootstrapResult {
+                    num_remaining,
+                    stats: stats_info,
+                }));
+
+                (false, None) // 消费，完成
             }
-            Err(e) => {
-                error!("Bootstrap error: {:?}", e);
-                handle.finish(Err(Error::Behaviour(format!("Bootstrap error: {:?}", e))));
-                return false;
-            }
+            _ => (true, Some(event)), // 继续等待
         }
-
-        // 非最后一步，继续等待
-        if !step.last {
-            return true;
-        }
-
-        // Bootstrap 完成
-        let stats_info = QueryStatsInfo::from(self.stats.as_ref().unwrap());
-        info!("Bootstrap completed: {:?}", stats_info);
-
-        // 获取最后一次的 num_remaining
-        let num_remaining = match res {
-            Ok(kad::BootstrapOk { num_remaining, .. }) => *num_remaining,
-            Err(_) => 0,
-        };
-
-        handle.finish(Ok(BootstrapResult {
-            num_remaining,
-            stats: stats_info,
-        }));
-
-        false // 完成
     }
 }

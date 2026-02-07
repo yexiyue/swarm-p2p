@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::runtime::{CborMessage, CoreBehaviourEvent};
 use crate::util::QueryStatsInfo;
 
-use super::super::{CommandHandler, CoreSwarm, ResultHandle};
+use super::super::{CommandHandler, CoreSwarm, OnEventResult, ResultHandle};
 
 /// GetRecord 命令结果
 #[derive(Debug, Clone)]
@@ -47,75 +47,73 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
 
     async fn on_event(
         &mut self,
-        event: &SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
+        event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
-    ) -> bool {
-        // 只处理 Kademlia OutboundQueryProgressed 事件
-        let SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(kad::Event::OutboundQueryProgressed {
-            id,
-            result: kad::QueryResult::GetRecord(res),
-            stats,
-            step,
-        })) = event
-        else {
-            return true; // 继续等待
-        };
+    ) -> OnEventResult<Req, Resp> {
+        match &event {
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
+                kad::Event::OutboundQueryProgressed {
+                    id,
+                    result: kad::QueryResult::GetRecord(res),
+                    stats,
+                    step,
+                },
+            )) if self.query_id == Some(*id) => {
+                // 累积统计
+                self.stats = Some(match self.stats.take() {
+                    Some(s) => s.merge(stats.clone()),
+                    None => stats.clone(),
+                });
 
-        // 检查是否是我们的查询
-        if self.query_id != Some(*id) {
-            return true;
-        }
-
-        // 累积统计
-        self.stats = Some(match self.stats.take() {
-            Some(s) => s.merge(stats.clone()),
-            None => stats.clone(),
-        });
-
-        // 处理结果
-        match res {
-            Ok(ok) => {
-                // 保存找到的记录（取第一个）
-                if self.record.is_none() {
-                    if let kad::GetRecordOk::FoundRecord(peer_record) = ok {
-                        self.record = Some(peer_record.record.clone());
-                        info!("GetRecord: found record");
+                // 处理结果
+                match res {
+                    Ok(ok) => {
+                        // 保存找到的记录（取第一个）
+                        if self.record.is_none() {
+                            if let kad::GetRecordOk::FoundRecord(peer_record) = ok {
+                                self.record = Some(peer_record.record.clone());
+                                info!("GetRecord: found record");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // 如果已经找到记录，忽略后续错误
+                        if self.record.is_none() {
+                            error!("GetRecord error: {:?}", e);
+                            if step.last {
+                                handle.finish(Err(Error::KadGetRecord(format!("{:?}", e))));
+                                return (false, None); // 消费，完成
+                            }
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                // 如果已经找到记录，忽略后续错误
-                if self.record.is_none() {
-                    error!("GetRecord error: {:?}", e);
-                    if step.last {
-                        handle.finish(Err(Error::KadGetRecord(format!("{:?}", e))));
-                        return false;
+
+                // 非最后一步，继续等待
+                if !step.last {
+                    return (true, None); // 消费，继续等待
+                }
+
+                // 查询完成
+                let stats_info = QueryStatsInfo::from(self.stats.as_ref().unwrap());
+
+                match self.record.take() {
+                    Some(record) => {
+                        info!("GetRecord completed: {:?}", stats_info);
+                        handle.finish(Ok(GetRecordResult {
+                            record,
+                            stats: stats_info,
+                        }));
+                    }
+                    None => {
+                        handle.finish(Err(Error::KadGetRecord(
+                            "Record not found".to_string(),
+                        )));
                     }
                 }
+
+                (false, None) // 消费，完成
             }
+            _ => (true, Some(event)), // 继续等待
         }
-
-        // 非最后一步，继续等待
-        if !step.last {
-            return true;
-        }
-
-        // 查询完成
-        let stats_info = QueryStatsInfo::from(self.stats.as_ref().unwrap());
-
-        match self.record.take() {
-            Some(record) => {
-                info!("GetRecord completed: {:?}", stats_info);
-                handle.finish(Ok(GetRecordResult {
-                    record,
-                    stats: stats_info,
-                }));
-            }
-            None => {
-                handle.finish(Err(Error::KadGetRecord("Record not found".to_string())));
-            }
-        }
-
-        false // 完成
     }
 }
