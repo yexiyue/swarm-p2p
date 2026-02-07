@@ -4,9 +4,9 @@ use anyhow::Result;
 use libp2p::{noise, tcp, yamux, SwarmBuilder};
 use tokio::sync::mpsc;
 
-use super::client::{EventReceiver, NetClient};
 use super::event_loop::EventLoop;
 use super::{CborMessage, CoreBehaviour};
+use crate::client::{EventReceiver, NetClient};
 use crate::config::NodeConfig;
 use crate::pending_map::PendingMap;
 
