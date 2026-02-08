@@ -1,0 +1,35 @@
+[Unit]
+Description=SwarmDrop Bootstrap + Relay Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=swarmdrop
+Group=swarmdrop
+WorkingDirectory=/opt/swarm-bootstrap
+ExecStart=/opt/swarm-bootstrap/swarm-bootstrap \
+    --tcp-port 4001 \
+    --quic-port 4001 \
+    --key-file /opt/swarm-bootstrap/identity.key
+Restart=on-failure
+RestartSec=5
+
+# 安全加固
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/swarm-bootstrap
+PrivateTmp=yes
+
+# 日志
+Environment=RUST_LOG=info
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=swarm-bootstrap
+
+# 资源限制
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

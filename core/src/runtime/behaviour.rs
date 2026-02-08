@@ -105,7 +105,7 @@ where
         // - replication_factor: 复制因子，存储到 N 个最近节点
         // - publication_interval: 定期重新发布，保持记录有效
         // - provider_record_ttl: Provider 记录的 TTL
-        let mut kad_config = kad::Config::new(StreamProtocol::new("/ipfs/kad/1.0.0"));
+        let mut kad_config = kad::Config::default();
         kad_config
             .set_query_timeout(config.kad_query_timeout)
             .set_record_ttl(Some(Duration::from_secs(3600))) // 1 小时
