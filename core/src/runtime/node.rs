@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use libp2p::{noise, tcp, yamux, SwarmBuilder};
+use libp2p::{SwarmBuilder, noise, tcp, yamux};
 use tokio::sync::mpsc;
 
 use super::event_loop::EventLoop;
@@ -35,16 +35,25 @@ where
     Req: CborMessage,
     Resp: CborMessage,
 {
-    // 使用 SwarmBuilder 构建 swarm
-    // 自动配置 TCP + QUIC + DNS + Relay 多协议传输层
-    let swarm = SwarmBuilder::with_existing_identity(keypair)
+    // 构建 swarm：TCP + QUIC + (可选 DNS) + Relay
+    // dns feature 由上层按平台决定是否启用（Android 上 /etc/resolv.conf 不存在）
+    let builder = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
-        .with_quic()
-        .with_dns()?
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
+        .with_quic();
+
+    #[cfg(feature = "dns")]
+    let builder = builder.with_dns()?;
+
+    let swarm = builder
         .with_relay_client(noise::Config::new, yamux::Config::default)?
-        .with_behaviour(|key, relay_client| CoreBehaviour::<Req, Resp>::new(key, relay_client, &config))
-        .unwrap()
+        .with_behaviour(|key, relay_client| {
+            CoreBehaviour::<Req, Resp>::new(key, relay_client, &config)
+        })?
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(config.idle_connection_timeout))
         .build();
 
