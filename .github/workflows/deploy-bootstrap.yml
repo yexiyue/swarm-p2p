@@ -73,7 +73,7 @@ jobs:
           username: ${{ env.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
           source: bootstrap/swarm-bootstrap.service
-          target: /etc/systemd/system/
+          target: /tmp/
           strip_components: 1
 
       - name: Restart service
@@ -84,6 +84,10 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           script: |
             chmod +x ${{ env.DEPLOY_DIR }}/${{ env.BINARY_NAME }}
+            if [ ! -f /etc/systemd/system/swarm-bootstrap.service ]; then
+              cp /tmp/swarm-bootstrap.service /etc/systemd/system/
+            fi
+            rm -f /tmp/swarm-bootstrap.service
             systemctl daemon-reload
             systemctl enable swarm-bootstrap
             systemctl restart swarm-bootstrap || true
