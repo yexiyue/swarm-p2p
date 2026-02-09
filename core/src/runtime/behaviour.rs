@@ -32,7 +32,7 @@ impl<T> CborMessage for T where
 /// - `kad`: Kademlia DHT，分布式哈希表用于跨网络发现
 /// - `mdns`: 局域网发现，无需中心服务器
 /// - `relay_client`: 中继客户端，NAT 穿透备选方案
-/// - `autonat`: NAT 类型检测，判断是否需要中继/打洞
+/// - `autonat`: AutoNAT v2 Client，检测外部地址是否可达
 /// - `dcutr`: 打洞协调，实现 NAT 穿透
 #[derive(NetworkBehaviour)]
 pub struct CoreBehaviour<Req, Resp>
@@ -46,7 +46,7 @@ where
     pub req_resp: request_response::cbor::Behaviour<Req, Resp>,
     pub mdns: mdns::tokio::Behaviour,
     pub relay_client: relay::client::Behaviour,
-    pub autonat: autonat::Behaviour,
+    pub autonat: autonat::v2::client::Behaviour,
     pub dcutr: dcutr::Behaviour,
 }
 
@@ -130,12 +130,11 @@ where
         let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
             .expect("mDNS initialization failed");
 
-        // ===== AutoNAT =====
-        // 自动 NAT 类型检测
-        // 通过询问其他节点来判断自己的 NAT 类型：
-        // - Public: 公网可达，无需穿透
-        // - Private: 需要打洞或中继
-        let autonat = autonat::Behaviour::new(peer_id, autonat::Config::default());
+        // ===== AutoNAT v2 Client =====
+        // 定期向已连接的 AutoNAT v2 Server（如引导节点）发送探测请求，
+        // 让对方回拨自身地址以确认外部可达性。
+        // 成功确认的地址会自动注册为 ExternalAddr。
+        let autonat = autonat::v2::client::Behaviour::default();
 
         // ===== DCUtR =====
         // Direct Connection Upgrade through Relay

@@ -5,7 +5,7 @@ use libp2p::request_response::{Event as ReqRespEvent, Message};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{autonat, dcutr, ping};
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{CborMessage, CoreBehaviourEvent};
 use crate::command::{Command, CoreSwarm};
@@ -249,19 +249,25 @@ where
                     protocol_version: info.protocol_version,
                 })
             }
-            SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(autonat::Event::StatusChanged {
-                new,
-                ..
-            })) => {
-                let (status, public_addr) = match new {
-                    autonat::NatStatus::Public(addr) => (NatStatus::Public, Some(addr)),
-                    autonat::NatStatus::Private => (NatStatus::Private, None),
-                    autonat::NatStatus::Unknown => (NatStatus::Unknown, None),
-                };
-                Some(NodeEvent::NatStatusChanged {
-                    status,
-                    public_addr,
-                })
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(
+                autonat::v2::client::Event {
+                    tested_addr,
+                    server,
+                    result,
+                    ..
+                },
+            )) => match result {
+                Ok(()) => {
+                    info!("AutoNAT: address {} confirmed reachable by {}", tested_addr, server);
+                    Some(NodeEvent::NatStatusChanged {
+                        status: NatStatus::Public,
+                        public_addr: Some(tested_addr),
+                    })
+                }
+                Err(e) => {
+                    debug!("AutoNAT: address {} not reachable via {}: {}", tested_addr, server, e);
+                    None
+                }
             }
             _ => None,
         }

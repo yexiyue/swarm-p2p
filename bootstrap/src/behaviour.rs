@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use libp2p::{identify, identity::Keypair, kad, ping, relay, swarm::NetworkBehaviour};
+use libp2p::{autonat, identify, identity::Keypair, kad, ping, relay, swarm::NetworkBehaviour};
 
 /// 引导+中继节点的轻量网络行为
 ///
@@ -10,12 +10,14 @@ use libp2p::{identify, identity::Keypair, kad, ping, relay, swarm::NetworkBehavi
 /// - `identify`: 节点信息交换（客户端通过 identify 获取引导节点的监听地址）
 /// - `kad`: Kademlia DHT Server 模式，响应所有 DHT 查询
 /// - `relay`: Relay Server，为 NAT 后的节点中继流量
+/// - `autonat`: AutoNAT v2 Server，响应客户端的 NAT 检测请求
 #[derive(NetworkBehaviour)]
 pub struct BootstrapBehaviour {
     pub ping: ping::Behaviour,
     pub identify: identify::Behaviour,
     pub kad: kad::Behaviour<kad::store::MemoryStore>,
     pub relay: relay::Behaviour,
+    pub autonat: autonat::v2::server::Behaviour,
 }
 
 impl BootstrapBehaviour {
@@ -59,11 +61,17 @@ impl BootstrapBehaviour {
         // relay::Behaviour 是服务端，与客户端的 relay::client::Behaviour 不同
         let relay = relay::Behaviour::new(peer_id, relay::Config::default());
 
+        // ===== AutoNAT v2 Server =====
+        // 为客户端提供 NAT 检测服务：客户端请求引导节点回拨其地址，
+        // 以此判断客户端是否公网可达。
+        let autonat = autonat::v2::server::Behaviour::default();
+
         Self {
             ping,
             identify,
             kad,
             relay,
+            autonat,
         }
     }
 }

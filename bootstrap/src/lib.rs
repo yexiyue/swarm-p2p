@@ -93,6 +93,12 @@ fn handle_event(event: SwarmEvent<BootstrapBehaviourEvent>) {
         SwarmEvent::Behaviour(BootstrapBehaviourEvent::Relay(event)) => {
             info!("Relay: {:?}", event);
         }
+        SwarmEvent::Behaviour(BootstrapBehaviourEvent::Autonat(event)) => {
+            info!(
+                "AutoNAT: tested {} for client {}, result: {:?}",
+                event.tested_addr, event.client, event.result
+            );
+        }
         SwarmEvent::IncomingConnection { .. }
         | SwarmEvent::OutgoingConnectionError { .. }
         | SwarmEvent::IncomingConnectionError { .. } => {

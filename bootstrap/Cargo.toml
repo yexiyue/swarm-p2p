@@ -20,6 +20,7 @@ libp2p = { version = "0.56.0", features = [
     "relay",
     "macros",
     "dns",
+    "autonat"
 ] }
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "signal"] }
 futures = "0.3.31"
