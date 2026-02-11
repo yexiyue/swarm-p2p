@@ -51,7 +51,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetProvi
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> OnEventResult<Req, Resp> {
-        match &event {
+        match event {
             SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
                 kad::Event::OutboundQueryProgressed {
                     id,
@@ -59,18 +59,18 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetProvi
                     stats,
                     step,
                 },
-            )) if self.query_id == Some(*id) => {
+            )) if self.query_id == Some(id) => {
                 // 累积统计
                 self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats.clone()),
-                    None => stats.clone(),
+                    Some(s) => s.merge(stats),
+                    None => stats,
                 });
 
                 // 处理结果
                 match res {
                     Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) => {
                         // 收集 providers
-                        self.providers.extend(providers.iter().cloned());
+                        self.providers.extend(providers);
                         info!(
                             "GetProviders progress: found {} providers so far",
                             self.providers.len()
@@ -110,7 +110,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetProvi
 
                 (false, None) // 消费，完成
             }
-            _ => (true, Some(event)), // 继续等待
+            other => (true, Some(other)), // 继续等待
         }
     }
 }

@@ -50,7 +50,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> OnEventResult<Req, Resp> {
-        match &event {
+        match event {
             SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
                 kad::Event::OutboundQueryProgressed {
                     id,
@@ -58,11 +58,11 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
                     stats,
                     step,
                 },
-            )) if self.query_id == Some(*id) => {
+            )) if self.query_id == Some(id) => {
                 // 累积统计
                 self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats.clone()),
-                    None => stats.clone(),
+                    Some(s) => s.merge(stats),
+                    None => stats,
                 });
 
                 // 处理结果
@@ -71,7 +71,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
                         // 保存找到的记录（取第一个）
                         if self.record.is_none() {
                             if let kad::GetRecordOk::FoundRecord(peer_record) = ok {
-                                self.record = Some(peer_record.record.clone());
+                                self.record = Some(peer_record.record);
                                 info!("GetRecord: found record");
                             }
                         }
@@ -113,7 +113,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
 
                 (false, None) // 消费，完成
             }
-            _ => (true, Some(event)), // 继续等待
+            other => (true, Some(other)), // 继续等待
         }
     }
 }

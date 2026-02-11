@@ -59,7 +59,7 @@ where
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> OnEventResult<Req, Resp> {
-        match &event {
+        match event {
             // 收到响应
             SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(Event::Message {
                 peer,
@@ -69,9 +69,9 @@ where
                         response,
                     },
                 ..
-            })) if self.request_id.as_ref() == Some(request_id) && *peer == self.peer_id => {
+            })) if self.request_id.as_ref() == Some(&request_id) && peer == self.peer_id => {
                 info!("Received response from {}", peer);
-                handle.finish(Ok(response.clone()));
+                handle.finish(Ok(response));
                 (false, None) // 消费，完成
             }
             // 发送失败
@@ -80,7 +80,7 @@ where
                 request_id,
                 error,
                 ..
-            })) if self.request_id.as_ref() == Some(request_id) && *peer == self.peer_id => {
+            })) if self.request_id.as_ref() == Some(&request_id) && peer == self.peer_id => {
                 error!("Request to {} failed: {:?}", peer, error);
                 handle.finish(Err(Error::Behaviour(format!(
                     "Request to {} failed: {:?}",
@@ -88,7 +88,7 @@ where
                 ))));
                 (false, None) // 消费，完成
             }
-            _ => (true, Some(event)), // 继续等待
+            other => (true, Some(other)), // 继续等待
         }
     }
 }

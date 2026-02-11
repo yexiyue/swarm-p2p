@@ -64,12 +64,12 @@ where
     }
 
     /// 连接引导节点：注册地址到 Kad 路由表并 dial
-    pub fn connect_bootstrap_peers(
-        &mut self,
-        peers: &[(libp2p::PeerId, libp2p::Multiaddr)],
-    ) {
+    pub fn connect_bootstrap_peers(&mut self, peers: &[(libp2p::PeerId, libp2p::Multiaddr)]) {
         for (peer_id, addr) in peers {
-            self.swarm.behaviour_mut().kad.add_address(peer_id, addr.clone());
+            self.swarm
+                .behaviour_mut()
+                .kad
+                .add_address(peer_id, addr.clone());
             self.swarm.add_peer_address(*peer_id, addr.clone());
             if let Err(e) = self.swarm.dial(*peer_id) {
                 warn!("Failed to dial bootstrap peer {}: {}", peer_id, e);
@@ -250,26 +250,30 @@ where
                     protocol_version: info.protocol_version,
                 })
             }
-            SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(
-                autonat::v2::client::Event {
-                    tested_addr,
-                    server,
-                    result,
-                    ..
-                },
-            )) => match result {
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(autonat::v2::client::Event {
+                tested_addr,
+                server,
+                result,
+                ..
+            })) => match result {
                 Ok(()) => {
-                    info!("AutoNAT: address {} confirmed reachable by {}", tested_addr, server);
+                    info!(
+                        "AutoNAT: address {} confirmed reachable by {}",
+                        tested_addr, server
+                    );
                     Some(NodeEvent::NatStatusChanged {
                         status: NatStatus::Public,
                         public_addr: Some(tested_addr),
                     })
                 }
                 Err(e) => {
-                    debug!("AutoNAT: address {} not reachable via {}: {}", tested_addr, server, e);
+                    debug!(
+                        "AutoNAT: address {} not reachable via {}: {}",
+                        tested_addr, server, e
+                    );
                     None
                 }
-            }
+            },
             // Kad 路由表更新：将学到的地址同步到 Swarm 地址簿，
             // 确保后续 dial(peer_id) 能找到地址（跨网络 DHT 查询场景）
             SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(

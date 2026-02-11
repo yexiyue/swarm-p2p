@@ -49,7 +49,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for PutRecor
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> OnEventResult<Req, Resp> {
-        match &event {
+        match event {
             SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
                 kad::Event::OutboundQueryProgressed {
                     id,
@@ -57,11 +57,11 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for PutRecor
                     stats,
                     step,
                 },
-            )) if self.query_id == Some(*id) => {
+            )) if self.query_id == Some(id) => {
                 // 累积统计
                 self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats.clone()),
-                    None => stats.clone(),
+                    Some(s) => s.merge(stats),
+                    None => stats,
                 });
 
                 // 非最后一步，继续等待
@@ -84,7 +84,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for PutRecor
 
                 (false, None) // 消费，完成
             }
-            _ => (true, Some(event)), // 继续等待
+            other => (true, Some(other)), // 继续等待
         }
     }
 }

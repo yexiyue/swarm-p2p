@@ -63,7 +63,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
         handle: &ResultHandle<Self::Result>,
     ) -> OnEventResult<Req, Resp> {
-        match &event {
+        match event {
             SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
                 kad::Event::OutboundQueryProgressed {
                     id,
@@ -71,11 +71,11 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
                     stats,
                     step,
                 },
-            )) if self.query_id == Some(*id) => {
+            )) if self.query_id == Some(id) => {
                 // 累积统计
                 self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats.clone()),
-                    None => stats.clone(),
+                    Some(s) => s.merge(stats),
+                    None => stats,
                 });
 
                 // 处理结果
@@ -110,7 +110,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
 
                 // 获取最后一次的 num_remaining
                 let num_remaining = match res {
-                    Ok(kad::BootstrapOk { num_remaining, .. }) => *num_remaining,
+                    Ok(kad::BootstrapOk { num_remaining, .. }) => num_remaining,
                     Err(_) => 0,
                 };
 
@@ -121,7 +121,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
 
                 (false, None) // 消费，完成
             }
-            _ => (true, Some(event)), // 继续等待
+            other => (true, Some(other)), // 继续等待
         }
     }
 }
