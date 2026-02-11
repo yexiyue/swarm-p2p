@@ -230,16 +230,17 @@ where
             SwarmEvent::Behaviour(CoreBehaviourEvent::Identify(
                 libp2p::identify::Event::Received { peer_id, info, .. },
             )) => {
-                // 如果协议版本匹配，自动加入 Kad
+                // 如果协议版本匹配，自动加入 Kad 并注册地址到 Swarm
                 if info.protocol_version == self.protocol_version {
                     for addr in &info.listen_addrs {
                         self.swarm
                             .behaviour_mut()
                             .kad
                             .add_address(&peer_id, addr.clone());
+                        self.swarm.add_peer_address(peer_id, addr.clone());
                     }
                     info!(
-                        "Added peer {} to Kad (protocol: {})",
+                        "Added peer {} to Kad + Swarm (protocol: {})",
                         peer_id, info.protocol_version
                     );
                 }
@@ -268,6 +269,23 @@ where
                     debug!("AutoNAT: address {} not reachable via {}: {}", tested_addr, server, e);
                     None
                 }
+            }
+            // Kad 路由表更新：将学到的地址同步到 Swarm 地址簿，
+            // 确保后续 dial(peer_id) 能找到地址（跨网络 DHT 查询场景）
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Kad(
+                libp2p::kad::Event::RoutingUpdated {
+                    peer, addresses, ..
+                },
+            )) => {
+                for addr in addresses.iter() {
+                    self.swarm.add_peer_address(peer, addr.clone());
+                }
+                debug!(
+                    "Kad routing updated for {}, synced {} addrs to swarm",
+                    peer,
+                    addresses.len()
+                );
+                None
             }
             _ => None,
         }

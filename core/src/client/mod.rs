@@ -6,7 +6,7 @@ use libp2p::PeerId;
 use tokio::sync::mpsc;
 
 use crate::Result;
-use crate::command::{Command, DialCommand};
+use crate::command::{Command, DialCommand, DisconnectCommand, IsConnectedCommand};
 use future::CommandFuture;
 use crate::event::NodeEvent;
 use crate::pending_map::PendingMap;
@@ -54,6 +54,18 @@ where
     /// 连接到指定 peer
     pub async fn dial(&self, peer_id: PeerId) -> Result<()> {
         let cmd = DialCommand::new(peer_id);
+        CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    /// 检查是否已连接到指定 peer
+    pub async fn is_connected(&self, peer_id: PeerId) -> Result<bool> {
+        let cmd = IsConnectedCommand::new(peer_id);
+        CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    /// 断开与指定 peer 的所有连接
+    pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
+        let cmd = DisconnectCommand::new(peer_id);
         CommandFuture::new(cmd, self.command_tx.clone()).await
     }
 
