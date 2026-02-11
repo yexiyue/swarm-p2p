@@ -49,6 +49,11 @@ pub struct NodeConfig {
 
     /// Request-Response 协议名称（如 "/myapp/req/1.0.0"）
     pub req_resp_protocol: String,
+
+    /// Request-Response 请求超时时间
+    ///
+    /// 配对等需要用户交互的场景，默认 10 秒太短，建议 120 秒。
+    pub req_resp_timeout: Duration,
 }
 
 impl Default for NodeConfig {
@@ -71,6 +76,7 @@ impl Default for NodeConfig {
             kad_query_timeout: Duration::from_secs(60),
             kad_server_mode: false,
             req_resp_protocol: "/swarm-p2p/req/1.0.0".into(),
+            req_resp_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -123,6 +129,11 @@ impl NodeConfig {
         self.req_resp_protocol = protocol.into();
         self
     }
+
+    pub fn with_req_resp_timeout(mut self, timeout: Duration) -> Self {
+        self.req_resp_timeout = timeout;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -145,6 +156,7 @@ mod tests {
         assert_eq!(config.ping_timeout, Duration::from_secs(10));
         assert_eq!(config.kad_query_timeout, Duration::from_secs(60));
         assert_eq!(config.req_resp_protocol, "/swarm-p2p/req/1.0.0");
+        assert_eq!(config.req_resp_timeout, Duration::from_secs(120));
     }
 
     #[test]

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use libp2p::{SwarmBuilder, noise, tcp, yamux};
 use tokio::sync::mpsc;
@@ -24,9 +22,6 @@ const EVENT_CHANNEL_SIZE: usize = 64;
 /// - QUIC（内置 TLS 1.3 加密和多路复用，NAT 穿透更优）
 /// - Relay client（无法直连时的兜底）
 /// - DNS 解析（支持 /dnsaddr/, /dns4/, /dns6/ multiaddr）
-/// Pending request 默认 TTL（60 秒）
-const PENDING_REQUEST_TTL: Duration = Duration::from_secs(60);
-
 pub fn start<Req, Resp>(
     keypair: libp2p::identity::Keypair,
     config: NodeConfig,
@@ -62,7 +57,8 @@ where
     let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
 
     // 创建共享的 PendingMap（EventLoop 存入，NetClient 取出）
-    let pending_channels = PendingMap::new(PENDING_REQUEST_TTL);
+    // TTL 与 req_resp_timeout 保持一致，避免 channel 被提前清理
+    let pending_channels = PendingMap::new(config.req_resp_timeout);
 
     // 创建 event loop
     let mut event_loop = EventLoop::new(

@@ -147,7 +147,7 @@ where
                     .expect("invalid req_resp_protocol"),
                 request_response::ProtocolSupport::Full,
             )],
-            request_response::Config::default(),
+            request_response::Config::default().with_request_timeout(config.req_resp_timeout),
         );
 
         Self {
