@@ -2,15 +2,18 @@ mod future;
 mod kad;
 mod req_resp;
 
-use libp2p::PeerId;
+use libp2p::{Multiaddr, PeerId};
 use tokio::sync::mpsc;
 
 use crate::Result;
-use crate::command::{Command, DialCommand, DisconnectCommand, IsConnectedCommand};
-use future::CommandFuture;
+use crate::command::{
+    AddPeerAddrsCommand, Command, DialCommand, DisconnectCommand, GetListenAddrsCommand,
+    IsConnectedCommand,
+};
 use crate::event::NodeEvent;
 use crate::pending_map::PendingMap;
 use crate::runtime::CborMessage;
+use future::CommandFuture;
 
 /// 网络客户端，用于发送命令
 pub struct NetClient<Req, Resp>
@@ -19,8 +22,7 @@ where
     Resp: CborMessage,
 {
     command_tx: mpsc::Sender<Command<Req, Resp>>,
-    pending_channels:
-        PendingMap<u64, libp2p::request_response::ResponseChannel<Resp>>,
+    pending_channels: PendingMap<u64, libp2p::request_response::ResponseChannel<Resp>>,
 }
 
 impl<Req, Resp> Clone for NetClient<Req, Resp>
@@ -66,6 +68,18 @@ where
     /// 断开与指定 peer 的所有连接
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         let cmd = DisconnectCommand::new(peer_id);
+        CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    /// 获取本节点的所有可达地址（监听地址 + 外部地址）
+    pub async fn get_addrs(&self) -> Result<Vec<Multiaddr>> {
+        let cmd = GetListenAddrsCommand::new();
+        CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    /// 将指定 peer 的地址注册到 Swarm 地址簿
+    pub async fn add_peer_addrs(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
+        let cmd = AddPeerAddrsCommand::new(peer_id, addrs);
         CommandFuture::new(cmd, self.command_tx.clone()).await
     }
 
