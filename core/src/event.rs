@@ -1,8 +1,8 @@
 use libp2p::{Multiaddr, PeerId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// NAT 状态
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NatStatus {
     /// 公网可达
@@ -17,30 +17,22 @@ pub enum NatStatus {
 ///
 /// 泛型参数 `Req` 是 request-response 协议的请求类型，
 /// 用于 `InboundRequest` 变体携带请求内容。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NodeEvent<Req = ()> {
     /// 开始监听某个地址
-    Listening {
-        addr: Multiaddr,
-    },
+    Listening { addr: Multiaddr },
 
     /// 发现 peers（mDNS）
-    PeersDiscovered {
-        peers: Vec<(PeerId, Multiaddr)>,
-    },
+    PeersDiscovered { peers: Vec<(PeerId, Multiaddr)> },
 
     /// peer 已连接
     #[serde(rename_all = "camelCase")]
-    PeerConnected {
-        peer_id: PeerId,
-    },
+    PeerConnected { peer_id: PeerId },
 
     /// peer 已断开
     #[serde(rename_all = "camelCase")]
-    PeerDisconnected {
-        peer_id: PeerId,
-    },
+    PeerDisconnected { peer_id: PeerId },
 
     /// 收到 identify 信息
     #[serde(rename_all = "camelCase")]
@@ -69,9 +61,7 @@ pub enum NodeEvent<Req = ()> {
 
     /// DCUtR 打洞成功，连接已升级为直连
     #[serde(rename_all = "camelCase")]
-    HolePunchSucceeded {
-        peer_id: PeerId,
-    },
+    HolePunchSucceeded { peer_id: PeerId },
 
     /// DCUtR 打洞失败
     #[serde(rename_all = "camelCase")]
