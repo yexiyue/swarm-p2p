@@ -156,9 +156,9 @@ where
             // 只在最后一个连接关闭时通知（peer 级别聚合）
             SwarmEvent::ConnectionClosed {
                 peer_id,
-                num_established,
+                num_established: 0,
                 ..
-            } if num_established == 0 => Some(NodeEvent::PeerDisconnected { peer_id }),
+            } => Some(NodeEvent::PeerDisconnected { peer_id }),
             // Inbound request: 取出 ResponseChannel 暂存，通知前端
             SwarmEvent::Behaviour(CoreBehaviourEvent::ReqResp(ReqRespEvent::Message {
                 peer,
@@ -243,6 +243,11 @@ where
                         "Added peer {} to Kad + Swarm (protocol: {})",
                         peer_id, info.protocol_version
                     );
+                } else {
+                    debug!(
+                        "Peer {} protocol mismatch: expected {}, got {}",
+                        peer_id, self.protocol_version, info.protocol_version
+                    );
                 }
                 Some(NodeEvent::IdentifyReceived {
                     peer_id,
@@ -250,6 +255,9 @@ where
                     protocol_version: info.protocol_version,
                 })
             }
+            // AutoNAT: 仅在探测成功时上报 Public 状态。
+            // 单次探测失败不代表节点在 NAT 后面（可能是探测服务器自身不可达），
+            // 因此失败时保持 Unknown，避免误判为 Private。
             SwarmEvent::Behaviour(CoreBehaviourEvent::Autonat(autonat::v2::client::Event {
                 tested_addr,
                 server,

@@ -61,10 +61,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetProvi
                 },
             )) if self.query_id == Some(id) => {
                 // 累积统计
-                self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats),
-                    None => stats,
-                });
+                super::merge_stats(&mut self.stats, stats);
 
                 // 处理结果
                 match res {
@@ -85,7 +82,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetProvi
                     }
                     Err(e) => {
                         error!("GetProviders error: {:?}", e);
-                        handle.finish(Err(Error::KadGetProviders(format!("{:?}", e))));
+                        handle.finish(Err(Error::Kad(format!("GetProviders: {:?}", e))));
                         return (false, None); // 消费，完成
                     }
                 }

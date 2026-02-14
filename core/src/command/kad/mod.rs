@@ -15,3 +15,13 @@ pub use put_record::*;
 pub use remove_record::*;
 pub use start_provide::*;
 pub use stop_provide::*;
+
+use libp2p::kad;
+
+/// 累积 Kad 查询统计（多步查询中每步都会产生新的 stats）
+fn merge_stats(existing: &mut Option<kad::QueryStats>, incoming: kad::QueryStats) {
+    *existing = Some(match existing.take() {
+        Some(s) => s.merge(incoming),
+        None => incoming,
+    });
+}

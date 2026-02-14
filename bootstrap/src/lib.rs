@@ -25,7 +25,7 @@ pub async fn run(
         .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_quic()
         .with_dns()?
-        .with_behaviour(|key| behaviour::BootstrapBehaviour::new(key))?
+        .with_behaviour(behaviour::BootstrapBehaviour::new)?
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(idle_timeout))
         .build();
 

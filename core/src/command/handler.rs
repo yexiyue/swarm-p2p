@@ -46,6 +46,12 @@ impl<T> Clone for ResultHandle<T> {
     }
 }
 
+impl<T> Default for ResultHandle<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> ResultHandle<T> {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(ResultState::default())))

@@ -60,28 +60,24 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
                 },
             )) if self.query_id == Some(id) => {
                 // 累积统计
-                self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats),
-                    None => stats,
-                });
+                super::merge_stats(&mut self.stats, stats);
 
                 // 处理结果
                 match res {
                     Ok(ok) => {
                         // 保存找到的记录（取第一个）
-                        if self.record.is_none() {
-                            if let kad::GetRecordOk::FoundRecord(peer_record) = ok {
+                        if self.record.is_none()
+                            && let kad::GetRecordOk::FoundRecord(peer_record) = ok {
                                 self.record = Some(peer_record.record);
                                 info!("GetRecord: found record");
                             }
-                        }
                     }
                     Err(e) => {
                         // 如果已经找到记录，忽略后续错误
                         if self.record.is_none() {
                             error!("GetRecord error: {:?}", e);
                             if step.last {
-                                handle.finish(Err(Error::KadGetRecord(format!("{:?}", e))));
+                                handle.finish(Err(Error::Kad(format!("GetRecord: {:?}", e))));
                                 return (false, None); // 消费，完成
                             }
                         }
@@ -105,7 +101,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetRecor
                         }));
                     }
                     None => {
-                        handle.finish(Err(Error::KadGetRecord(
+                        handle.finish(Err(Error::Kad(
                             "Record not found".to_string(),
                         )));
                     }

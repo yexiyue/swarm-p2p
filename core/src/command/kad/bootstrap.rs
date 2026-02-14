@@ -51,9 +51,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
             }
             Err(e) => {
                 error!("Bootstrap failed to start: {:?}", e);
-                handle.finish(Err(Error::Behaviour(format!(
-                    "Bootstrap failed: no known peers"
-                ))));
+                handle.finish(Err(Error::Kad("Bootstrap failed: no known peers".to_string())));
             }
         }
     }
@@ -73,10 +71,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
                 },
             )) if self.query_id == Some(id) => {
                 // 累积统计
-                self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats),
-                    None => stats,
-                });
+                super::merge_stats(&mut self.stats, stats);
 
                 // 处理结果
                 match res {
@@ -91,8 +86,8 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for Bootstra
                     }
                     Err(e) => {
                         error!("Bootstrap error: {:?}", e);
-                        handle.finish(Err(Error::Behaviour(format!(
-                            "Bootstrap error: {:?}",
+                        handle.finish(Err(Error::Kad(format!(
+                            "Bootstrap: {:?}",
                             e
                         ))));
                         return (false, None); // 消费，完成

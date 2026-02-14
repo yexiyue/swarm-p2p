@@ -30,7 +30,7 @@ where
         Resp: Unpin,
     {
         let channel = self.pending_channels.take(&pending_id).ok_or_else(|| {
-            crate::error::Error::Behaviour(format!(
+            crate::error::Error::RequestResponse(format!(
                 "No pending channel for pending_id={} (expired or already responded)",
                 pending_id
             ))

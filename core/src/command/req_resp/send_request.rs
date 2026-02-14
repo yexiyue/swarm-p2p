@@ -38,7 +38,7 @@ where
 
     async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, handle: &ResultHandle<Self::Result>) {
         let Some(request) = self.request.take() else {
-            handle.finish(Err(Error::Behaviour(
+            handle.finish(Err(Error::RequestResponse(
                 "SendRequest: run called twice".into(),
             )));
             return;
@@ -82,7 +82,7 @@ where
                 ..
             })) if self.request_id.as_ref() == Some(&request_id) && peer == self.peer_id => {
                 error!("Request to {} failed: {:?}", peer, error);
-                handle.finish(Err(Error::Behaviour(format!(
+                handle.finish(Err(Error::RequestResponse(format!(
                     "Request to {} failed: {:?}",
                     peer, error
                 ))));

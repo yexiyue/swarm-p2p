@@ -64,10 +64,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetClose
                 },
             )) if self.query_id == Some(id) => {
                 // 累积统计
-                self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats),
-                    None => stats,
-                });
+                super::merge_stats(&mut self.stats, stats);
 
                 // 处理结果
                 match res {
@@ -81,7 +78,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for GetClose
                     }
                     Err(e) => {
                         error!("GetClosestPeers error: {:?}", e);
-                        handle.finish(Err(Error::KadGetClosestPeers(format!("{:?}", e))));
+                        handle.finish(Err(Error::Kad(format!("GetClosestPeers: {:?}", e))));
                         return (false, None); // 消费，完成
                     }
                 }

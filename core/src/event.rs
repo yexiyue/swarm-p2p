@@ -2,14 +2,16 @@ use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
 /// NAT 状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// 仅区分 Public 和 Unknown：AutoNAT v2 按地址逐一探测，
+/// 单次失败无法断定节点在 NAT 后面，因此不设 Private 状态。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NatStatus {
-    /// 公网可达
+    /// 公网可达（至少一个地址通过 AutoNAT 验证）
     Public,
-    /// NAT 后面（私网）
-    Private,
-    /// 未知
+    /// 未知（尚未探测或探测未成功）
+    #[default]
     Unknown,
 }
 

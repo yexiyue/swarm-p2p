@@ -22,6 +22,10 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for DialComm
     type Result = ();
 
     async fn run(&mut self, swarm: &mut CoreSwarm<Req, Resp>, handle: &ResultHandle<Self::Result>) {
+        if swarm.is_connected(&self.peer_id) {
+            handle.finish(Ok(()));
+            return;
+        }
         if let Err(e) = swarm.dial(self.peer_id) {
             handle.finish(Err(Error::Dial(e.to_string())));
         }

@@ -8,6 +8,12 @@ use super::{CommandHandler, CoreSwarm, ResultHandle};
 /// GetListenAddrs 命令 - 获取本节点的所有可达地址（监听地址 + 外部地址）
 pub struct GetListenAddrsCommand;
 
+impl Default for GetListenAddrsCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GetListenAddrsCommand {
     pub fn new() -> Self {
         Self

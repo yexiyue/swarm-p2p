@@ -20,30 +20,15 @@ pub enum Error {
     #[error("Dial error: {0}")]
     Dial(String),
 
-    #[error("Kad store error: {0}")]
-    KadStore(#[from] libp2p::kad::store::Error),
-
-    #[error("Kad provide error: {0}")]
-    KadProvide(String),
-
-    #[error("Kad get providers error: {0}")]
-    KadGetProviders(String),
-
-    #[error("Kad get record error: {0}")]
-    KadGetRecord(String),
-
-    #[error("Kad put record error: {0}")]
-    KadPutRecord(String),
-
-    #[error("Kad get closest peers error: {0}")]
-    KadGetClosestPeers(String),
-
     #[error("Listen error: {0}")]
     Listen(String),
 
+    #[error("Kad error: {0}")]
+    Kad(String),
+
+    #[error("Request-response error: {0}")]
+    RequestResponse(String),
+
     #[error("Behaviour error: {0}")]
     Behaviour(String),
-
-    #[error("Config error: {0}")]
-    Config(String),
 }

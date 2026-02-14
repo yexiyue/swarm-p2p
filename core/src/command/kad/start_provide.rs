@@ -39,7 +39,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for StartPro
                 self.query_id = Some(query_id);
             }
             Err(e) => {
-                handle.finish(Err(e.into()));
+                handle.finish(Err(Error::Kad(format!("StartProviding store: {}", e))));
             }
         }
     }
@@ -59,10 +59,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for StartPro
                 },
             )) if self.query_id == Some(id) => {
                 // 累积统计
-                self.stats = Some(match self.stats.take() {
-                    Some(s) => s.merge(stats),
-                    None => stats,
-                });
+                super::merge_stats(&mut self.stats, stats);
 
                 // 非最后一步，继续等待
                 if !step.last {
@@ -78,7 +75,7 @@ impl<Req: CborMessage, Resp: CborMessage> CommandHandler<Req, Resp> for StartPro
                     }
                     Err(e) => {
                         error!("Provide error: {:?}", e);
-                        handle.finish(Err(Error::KadProvide(format!("{:?}", e))));
+                        handle.finish(Err(Error::Kad(format!("Provide: {:?}", e))));
                     }
                 }
 

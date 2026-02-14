@@ -37,7 +37,7 @@ where
         handle: &ResultHandle<Self::Result>,
     ) {
         let (Some(channel), Some(response)) = (self.channel.take(), self.response.take()) else {
-            handle.finish(Err(Error::Behaviour(
+            handle.finish(Err(Error::RequestResponse(
                 "SendResponse: run called twice".into(),
             )));
             return;
@@ -48,7 +48,7 @@ where
             .send_response(channel, response)
         {
             Ok(()) => handle.finish(Ok(())),
-            Err(_) => handle.finish(Err(Error::Behaviour(
+            Err(_) => handle.finish(Err(Error::RequestResponse(
                 "Failed to send response: channel closed".into(),
             ))),
         }
