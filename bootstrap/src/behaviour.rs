@@ -59,7 +59,16 @@ impl BootstrapBehaviour {
         // ===== Relay Server =====
         // 为 NAT 后的节点提供中继服务
         // relay::Behaviour 是服务端，与客户端的 relay::client::Behaviour 不同
-        let relay = relay::Behaviour::new(peer_id, relay::Config::default());
+        //
+        // 默认限制过于严格（128KB / 2min），文件传输会被切断。
+        // 放大限制以支持大文件传输（理想情况下 DCUtR 打洞成功后会走直连，
+        // relay 只在打洞失败时作为兜底）。
+        let relay_config = relay::Config {
+            max_circuit_bytes: 1024 * 1024 * 512, // 512 MB
+            max_circuit_duration: Duration::from_secs(3600), // 1 小时
+            ..Default::default()
+        };
+        let relay = relay::Behaviour::new(peer_id, relay_config);
 
         // ===== AutoNAT v2 Server =====
         // 为客户端提供 NAT 检测服务：客户端请求引导节点回拨其地址，
