@@ -63,7 +63,7 @@ where
         Ok(())
     }
 
-    /// 连接引导节点：注册地址到 Kad 路由表并 dial
+    /// 连接引导节点：注册地址到 Kad 路由表、dial、并申请 relay reservation
     pub fn connect_bootstrap_peers(&mut self, peers: &[(libp2p::PeerId, libp2p::Multiaddr)]) {
         for (peer_id, addr) in peers {
             self.swarm
@@ -75,6 +75,24 @@ where
                 warn!("Failed to dial bootstrap peer {}: {}", peer_id, e);
             } else {
                 info!("Dialing bootstrap peer {} at {}", peer_id, addr);
+            }
+
+            // 向 bootstrap 节点（同时也是 relay server）申请 relay reservation，
+            // 使其他节点可以通过 /p2p/<relay>/p2p-circuit 连接到本节点。
+            // reservation 成功后，relay circuit 地址会自动添加到 external_addresses()，
+            // 后续 get_addrs() 和 DHT 发布都会包含该地址。
+            //
+            // 注意：addr 可能已包含 /p2p/<peer_id> 后缀（如 /ip4/.../tcp/4001/p2p/12D3KooW...），
+            // 需要确保不重复追加。如果 addr 不含 /p2p/，则先追加。
+            let base = if addr.iter().any(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_))) {
+                addr.clone()
+            } else {
+                addr.clone().with(libp2p::multiaddr::Protocol::P2p(*peer_id))
+            };
+            let relay_addr = base.with(libp2p::multiaddr::Protocol::P2pCircuit);
+            match self.swarm.listen_on(relay_addr.clone()) {
+                Ok(_) => info!("Requesting relay reservation via {}", relay_addr),
+                Err(e) => warn!("Failed to listen on relay circuit {}: {}", relay_addr, e),
             }
         }
     }
