@@ -73,6 +73,14 @@ pub enum NodeEvent<Req = ()> {
         error: String,
     },
 
+    /// Relay 预约已被接受，本节点可通过中继被连接
+    #[serde(rename_all = "camelCase")]
+    RelayReservationAccepted {
+        relay_peer_id: PeerId,
+        /// 是否为续约（而非首次预约）
+        renewal: bool,
+    },
+
     /// 收到对端的 request-response 请求
     #[serde(rename_all = "camelCase")]
     InboundRequest {

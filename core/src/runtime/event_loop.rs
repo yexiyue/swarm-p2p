@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::StreamExt;
@@ -28,6 +29,9 @@ where
     pending_channels: PendingMap<u64, libp2p::request_response::ResponseChannel<Resp>>,
     /// pending_id 自增计数器
     pending_id_counter: AtomicU64,
+    /// Bootstrap 节点地址映射（peer_id → 地址列表），
+    /// 用于在连接建立后申请 relay reservation
+    bootstrap_peers: HashMap<libp2p::PeerId, Vec<libp2p::Multiaddr>>,
 }
 
 impl<Req, Resp> EventLoop<Req, Resp>
@@ -50,6 +54,7 @@ where
             protocol_version,
             pending_channels,
             pending_id_counter: AtomicU64::new(0),
+            bootstrap_peers: HashMap::new(),
         }
     }
 
@@ -63,7 +68,7 @@ where
         Ok(())
     }
 
-    /// 连接引导节点：注册地址到 Kad 路由表、dial、并申请 relay reservation
+    /// 连接引导节点：注册地址到 Kad 路由表、dial，并记录 bootstrap 节点用于后续 relay reservation
     pub fn connect_bootstrap_peers(&mut self, peers: &[(libp2p::PeerId, libp2p::Multiaddr)]) {
         for (peer_id, addr) in peers {
             self.swarm
@@ -77,23 +82,11 @@ where
                 info!("Dialing bootstrap peer {} at {}", peer_id, addr);
             }
 
-            // 向 bootstrap 节点（同时也是 relay server）申请 relay reservation，
-            // 使其他节点可以通过 /p2p/<relay>/p2p-circuit 连接到本节点。
-            // reservation 成功后，relay circuit 地址会自动添加到 external_addresses()，
-            // 后续 get_addrs() 和 DHT 发布都会包含该地址。
-            //
-            // 注意：addr 可能已包含 /p2p/<peer_id> 后缀（如 /ip4/.../tcp/4001/p2p/12D3KooW...），
-            // 需要确保不重复追加。如果 addr 不含 /p2p/，则先追加。
-            let base = if addr.iter().any(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_))) {
-                addr.clone()
-            } else {
-                addr.clone().with(libp2p::multiaddr::Protocol::P2p(*peer_id))
-            };
-            let relay_addr = base.with(libp2p::multiaddr::Protocol::P2pCircuit);
-            match self.swarm.listen_on(relay_addr.clone()) {
-                Ok(_) => info!("Requesting relay reservation via {}", relay_addr),
-                Err(e) => warn!("Failed to listen on relay circuit {}: {}", relay_addr, e),
-            }
+            // 记录 bootstrap 节点地址，等连接建立后再申请 relay reservation
+            self.bootstrap_peers
+                .entry(*peer_id)
+                .or_default()
+                .push(addr.clone());
         }
     }
 
@@ -161,6 +154,33 @@ where
         event: SwarmEvent<CoreBehaviourEvent<Req, Resp>>,
     ) -> Option<NodeEvent<Req>> {
         match event {
+            SwarmEvent::Behaviour(CoreBehaviourEvent::RelayClient(e)) => match e {
+                libp2p::relay::client::Event::ReservationReqAccepted {
+                    relay_peer_id,
+                    renewal,
+                    ..
+                } => {
+                    info!(
+                        "Relay reservation {} by {}",
+                        if renewal { "renewed" } else { "accepted" },
+                        relay_peer_id
+                    );
+                    Some(NodeEvent::RelayReservationAccepted {
+                        relay_peer_id,
+                        renewal,
+                    })
+                }
+                libp2p::relay::client::Event::OutboundCircuitEstablished {
+                    relay_peer_id, ..
+                } => {
+                    info!("Outbound circuit established via relay {}", relay_peer_id);
+                    None
+                }
+                libp2p::relay::client::Event::InboundCircuitEstablished { src_peer_id, .. } => {
+                    info!("Inbound circuit established from {}", src_peer_id);
+                    None
+                }
+            },
             SwarmEvent::NewListenAddr { address, .. } => {
                 Some(NodeEvent::Listening { addr: address })
             }
@@ -169,7 +189,30 @@ where
                 peer_id,
                 num_established,
                 ..
-            } if num_established.get() == 1 => Some(NodeEvent::PeerConnected { peer_id }),
+            } if num_established.get() == 1 => {
+                // 如果是 bootstrap 节点，连接建立后申请 relay reservation
+                if let Some(addrs) = self.bootstrap_peers.remove(&peer_id) {
+                    for addr in addrs {
+                        let base = if addr
+                            .iter()
+                            .any(|p| matches!(p, libp2p::multiaddr::Protocol::P2p(_)))
+                        {
+                            addr.clone()
+                        } else {
+                            addr.clone()
+                                .with(libp2p::multiaddr::Protocol::P2p(peer_id))
+                        };
+                        let relay_addr = base.with(libp2p::multiaddr::Protocol::P2pCircuit);
+                        match self.swarm.listen_on(relay_addr.clone()) {
+                            Ok(_) => info!("Requesting relay reservation via {}", relay_addr),
+                            Err(e) => {
+                                warn!("Failed to listen on relay circuit {}: {}", relay_addr, e)
+                            }
+                        }
+                    }
+                }
+                Some(NodeEvent::PeerConnected { peer_id })
+            }
             SwarmEvent::ConnectionEstablished { .. } => None,
             // 只在最后一个连接关闭时通知（peer 级别聚合）
             SwarmEvent::ConnectionClosed {
@@ -314,6 +357,33 @@ where
                     "Kad routing updated for {}, synced {} addrs to swarm",
                     peer,
                     addresses.len()
+                );
+                None
+            }
+            SwarmEvent::ListenerClosed {
+                listener_id,
+                addresses,
+                reason,
+            } => {
+                warn!(
+                    "Listener {:?} closed (addresses: {:?}): {:?}",
+                    listener_id, addresses, reason
+                );
+                None
+            }
+            SwarmEvent::ListenerError { listener_id, error } => {
+                warn!("Listener {:?} error: {}", listener_id, error);
+                None
+            }
+            SwarmEvent::IncomingConnectionError {
+                local_addr,
+                send_back_addr,
+                error,
+                ..
+            } => {
+                debug!(
+                    "Incoming connection error: local={}, remote={}, err={}",
+                    local_addr, send_back_addr, error
                 );
                 None
             }

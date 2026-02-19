@@ -30,6 +30,10 @@ struct Args {
     /// 空闲连接超时（秒）
     #[arg(long, default_value = "120")]
     idle_timeout: u64,
+
+    /// 公网 IP 地址（relay server 必须设置，否则 reservation 响应不含地址）
+    #[arg(long)]
+    external_ip: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -53,6 +57,16 @@ fn main() -> Result<()> {
     info!("TCP listen address: {}", tcp_addr);
     info!("QUIC listen address: {}", quic_addr);
 
+    // 构造外部地址列表
+    let external_addrs: Vec<Multiaddr> = if let Some(ref ip) = args.external_ip {
+        vec![
+            format!("/ip4/{}/tcp/{}", ip, args.tcp_port).parse()?,
+            format!("/ip4/{}/udp/{}/quic-v1", ip, args.quic_port).parse()?,
+        ]
+    } else {
+        vec![]
+    };
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -61,5 +75,6 @@ fn main() -> Result<()> {
             tcp_addr,
             quic_addr,
             Duration::from_secs(args.idle_timeout),
+            external_addrs,
         ))
 }

@@ -17,6 +17,7 @@ pub async fn run(
     tcp_addr: Multiaddr,
     quic_addr: Multiaddr,
     idle_timeout: Duration,
+    external_addrs: Vec<Multiaddr>,
 ) -> Result<()> {
     // 引导节点不调用 .with_relay_client()
     // 闭包签名为 |key| 而非 |key, relay_client|
@@ -31,6 +32,12 @@ pub async fn run(
 
     swarm.listen_on(tcp_addr)?;
     swarm.listen_on(quic_addr)?;
+
+    // 注册公网地址，relay reservation 响应会携带这些地址给 client
+    for addr in &external_addrs {
+        swarm.add_external_address(addr.clone());
+        info!("Added external address: {}", addr);
+    }
 
     info!("Bootstrap+Relay node started, waiting for connections...");
 
