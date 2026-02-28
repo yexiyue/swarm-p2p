@@ -71,11 +71,18 @@ sudo systemctl enable --now swarm-bootstrap
 journalctl -u swarm-bootstrap -f
 ```
 
-启动后可通过以下命令查看节点 PeerId，客户端需要用它配置引导节点地址：
+启动后可通过以下命令查看节点 PeerId：
 
 ```bash
 swarm-bootstrap peer-id
 # 12D3KooW...
+```
+
+将 PeerId 与公网 IP 拼成完整 multiaddr，配置到客户端：
+
+```
+/ip4/<公网IP>/tcp/4001/p2p/12D3KooW...
+/ip4/<公网IP>/udp/4001/quic-v1/p2p/12D3KooW...
 ```
 
 ### 5. 开放防火墙
