@@ -22,8 +22,8 @@ SwarmDrop 的 DHT 引导 + Relay 中继节点，部署在公网 VPS 上为客户
 从 [GitHub Releases](https://github.com/yexiyue/swarm-p2p/releases?q=bootstrap-v) 下载最新版本的 `swarm-bootstrap`（musl 静态编译，无依赖）：
 
 ```bash
-# 下载并赋予执行权限（替换为最新版本号）
-wget https://github.com/yexiyue/swarm-p2p/releases/download/bootstrap-v0.1.0/swarm-bootstrap
+# 下载并赋予执行权限
+wget https://github.com/yexiyue/swarm-p2p/releases/latest/download/swarm-bootstrap
 chmod +x swarm-bootstrap
 ```
 
