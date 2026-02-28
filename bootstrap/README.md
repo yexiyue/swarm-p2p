@@ -75,7 +75,7 @@ journalctl -u swarm-bootstrap -f
 启动后可通过以下命令查看节点 PeerId，客户端需要用它配置引导节点地址：
 
 ```bash
-swarm-bootstrap peer-id
+swarm-bootstrap peer-id --key-file /opt/swarm-bootstrap/identity.key
 # 12D3KooW...
 ```
 
