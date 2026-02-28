@@ -32,6 +32,7 @@ chmod +x swarm-bootstrap
 ```bash
 sudo mkdir -p /opt/swarm-bootstrap
 sudo mv swarm-bootstrap /opt/swarm-bootstrap/
+sudo ln -s /opt/swarm-bootstrap/swarm-bootstrap /usr/local/bin/swarm-bootstrap
 ```
 
 ### 3. 配置 systemd 服务
@@ -74,7 +75,7 @@ journalctl -u swarm-bootstrap -f
 启动后可通过以下命令查看节点 PeerId，客户端需要用它配置引导节点地址：
 
 ```bash
-/opt/swarm-bootstrap/swarm-bootstrap peer-id
+swarm-bootstrap peer-id
 # 12D3KooW...
 ```
 
