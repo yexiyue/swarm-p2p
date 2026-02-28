@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/swarm-bootstrap
-ExecStart=/opt/swarm-bootstrap/swarm-bootstrap \
+ExecStart=/opt/swarm-bootstrap/swarm-bootstrap run \
     --tcp-port 4001 \
     --quic-port 4001 \
     --key-file /opt/swarm-bootstrap/identity.key

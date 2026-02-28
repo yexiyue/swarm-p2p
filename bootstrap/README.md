@@ -54,7 +54,7 @@ sudo systemctl edit swarm-bootstrap
 ```ini
 [Service]
 ExecStart=
-ExecStart=/opt/swarm-bootstrap/swarm-bootstrap \
+ExecStart=/opt/swarm-bootstrap/swarm-bootstrap run \
     --tcp-port 4001 \
     --quic-port 4001 \
     --key-file /opt/swarm-bootstrap/identity.key \
@@ -71,12 +71,11 @@ sudo systemctl enable --now swarm-bootstrap
 journalctl -u swarm-bootstrap -f
 ```
 
-启动后日志会输出节点的 PeerId，客户端需要用它配置引导节点地址：
+启动后可通过以下命令查看节点 PeerId，客户端需要用它配置引导节点地址：
 
-```
-INFO  swarm_bootstrap: Node PeerId: 12D3KooW...
-INFO  swarm_bootstrap: Listening on /ip4/0.0.0.0/tcp/4001
-INFO  swarm_bootstrap: Added external address: /ip4/<公网IP>/tcp/4001
+```bash
+/opt/swarm-bootstrap/swarm-bootstrap peer-id
+# 12D3KooW...
 ```
 
 ### 5. 开放防火墙
@@ -86,19 +85,26 @@ sudo ufw allow 4001/tcp
 sudo ufw allow 4001/udp
 ```
 
-## CLI 参数
+## CLI
 
 ```
-Options:
+Commands:
+  run       启动引导+中继节点
+  peer-id   打印节点 PeerId 后退出
+
+swarm-bootstrap run [OPTIONS]
     --tcp-port <PORT>       TCP 监听端口          [默认: 4001]
     --quic-port <PORT>      QUIC 监听端口         [默认: 4001]
     --key-file <PATH>       密钥文件路径           [默认: identity.key]
     --listen-addr <IP>      监听 IP 地址           [默认: 0.0.0.0]
     --idle-timeout <SECS>   空闲连接超时(秒)       [默认: 120]
     --external-ip <IP>      公网 IP 地址（Relay Server 必须设置）
+
+swarm-bootstrap peer-id [OPTIONS]
+    --key-file <PATH>       密钥文件路径           [默认: identity.key]
 ```
 
-日志级别通过 `RUST_LOG` 环境变量控制，默认 `info`。
+`run` 的日志级别通过 `RUST_LOG` 环境变量控制，默认 `info`。
 
 ## 密钥管理
 
