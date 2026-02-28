@@ -17,7 +17,7 @@
 
 ```toml
 [dependencies]
-swarm-p2p-core = { path = "libs/core" }
+swarm-p2p-core = { git = "https://github.com/yexiyue/swarm-p2p" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 ```
@@ -224,6 +224,16 @@ flowchart TB
 | 应用 | Request-Response (CBOR) | 类型安全的请求-响应 |
 | 辅助 | Identify | 节点身份交换 |
 | 辅助 | Ping | 心跳与延迟检测 |
+
+## 仓库结构
+
+```
+swarm-p2p/
+├── core/        # swarm-p2p-core 库
+└── bootstrap/   # swarm-bootstrap 引导+中继节点
+```
+
+`bootstrap/` 是配套的公网节点，负责 DHT 引导和 Relay 中继。详见 [bootstrap/README.md](bootstrap/README.md)。
 
 ## 构建
 

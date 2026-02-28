@@ -1,79 +1,126 @@
 # swarm-bootstrap
 
-SwarmDrop 的 DHT 引导 + Relay 中继节点。部署在公网 VPS 上，为客户端提供：
+SwarmDrop 的 DHT 引导 + Relay 中继节点，部署在公网 VPS 上为客户端提供：
 
 - **Kademlia DHT Server** — 响应路由查询，帮助客户端互相发现
 - **Relay Server** — 为 NAT 后的节点中继流量，配合 DCUtR 打洞
+- **AutoNAT v2 Server** — 响应客户端的 NAT 检测请求（回拨探测）
 
-## 快速开始
+## 服务器要求
+
+预构建二进制为 `x86_64-unknown-linux-musl` 静态编译：
+
+- **操作系统：** Linux
+- **架构：** x86_64（AMD64）
+
+如果你的服务器是其他架构（如 ARM64），请参考[从源码构建](#从源码构建)自行编译。
+
+## 部署
+
+### 1. 下载二进制
+
+从 [GitHub Releases](https://github.com/yexiyue/swarm-p2p/releases?q=bootstrap-v) 下载最新版本的 `swarm-bootstrap`（musl 静态编译，无依赖）：
 
 ```bash
-# 编译
-cargo build --release -p swarm-bootstrap
-
-# 运行（首次自动生成 identity.key）
-./target/release/swarm-bootstrap
+# 下载并赋予执行权限（替换为最新版本号）
+wget https://github.com/yexiyue/swarm-p2p/releases/download/bootstrap-v0.1.0/swarm-bootstrap
+chmod +x swarm-bootstrap
 ```
 
-启动后输出 `Node PeerId: 12D3KooW...`，记下这个 PeerId，客户端需要用它来配置引导节点地址。
+### 2. 安装二进制
+
+```bash
+sudo mkdir -p /opt/swarm-bootstrap
+sudo mv swarm-bootstrap /opt/swarm-bootstrap/
+```
+
+### 3. 配置 systemd 服务
+
+下载服务文件：
+
+```bash
+sudo wget -O /etc/systemd/system/swarm-bootstrap.service \
+    https://raw.githubusercontent.com/yexiyue/swarm-p2p/main/bootstrap/swarm-bootstrap.service
+```
+
+**编辑服务文件，添加公网 IP**（Relay 必须设置，否则客户端无法通过本节点中继）：
+
+```bash
+sudo systemctl edit swarm-bootstrap
+```
+
+在编辑器中添加：
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/opt/swarm-bootstrap/swarm-bootstrap \
+    --tcp-port 4001 \
+    --quic-port 4001 \
+    --key-file /opt/swarm-bootstrap/identity.key \
+    --external-ip <你的公网IP>
+```
+
+### 4. 启动服务
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now swarm-bootstrap
+
+# 查看日志
+journalctl -u swarm-bootstrap -f
+```
+
+启动后日志会输出节点的 PeerId，客户端需要用它配置引导节点地址：
+
+```
+INFO  swarm_bootstrap: Node PeerId: 12D3KooW...
+INFO  swarm_bootstrap: Listening on /ip4/0.0.0.0/tcp/4001
+INFO  swarm_bootstrap: Added external address: /ip4/<公网IP>/tcp/4001
+```
+
+### 5. 开放防火墙
+
+```bash
+sudo ufw allow 4001/tcp
+sudo ufw allow 4001/udp
+```
 
 ## CLI 参数
 
 ```
-swarm-bootstrap [OPTIONS]
-
 Options:
     --tcp-port <PORT>       TCP 监听端口          [默认: 4001]
     --quic-port <PORT>      QUIC 监听端口         [默认: 4001]
     --key-file <PATH>       密钥文件路径           [默认: identity.key]
     --listen-addr <IP>      监听 IP 地址           [默认: 0.0.0.0]
     --idle-timeout <SECS>   空闲连接超时(秒)       [默认: 120]
+    --external-ip <IP>      公网 IP 地址（Relay Server 必须设置）
 ```
 
 日志级别通过 `RUST_LOG` 环境变量控制，默认 `info`。
 
-## 部署
-
-```bash
-# 1. 创建用户和目录
-sudo useradd -r -s /bin/false -d /opt/swarm-bootstrap swarmdrop
-sudo mkdir -p /opt/swarm-bootstrap
-sudo chown swarmdrop:swarmdrop /opt/swarm-bootstrap
-
-# 2. 部署二进制
-sudo cp target/release/swarm-bootstrap /opt/swarm-bootstrap/
-
-# 3. 安装 systemd 服务
-sudo cp swarm-bootstrap.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now swarm-bootstrap
-
-# 4. 查看日志
-journalctl -u swarm-bootstrap -f
-
-# 5. 开放防火墙
-sudo ufw allow 4001/tcp
-sudo ufw allow 4001/udp
-```
-
-CI/CD 已配置 GitHub Actions，push 到 `main` 分支且修改了 `bootstrap/` 目录会自动构建部署。
-
 ## 密钥管理
 
-- 首次启动自动生成 Ed25519 密钥对，保存为 `identity.key`（protobuf 编码）
+- 首次启动自动生成 Ed25519 密钥对，保存为 `identity.key`
 - 密钥决定 PeerId，**丢失密钥 = PeerId 改变 = 所有客户端需更新配置**
-- `identity.key` 已在 `.gitignore` 中，不会提交到仓库
+- 请妥善备份 `/opt/swarm-bootstrap/identity.key`
+
+## 从源码构建
+
+```bash
+cargo build --release -p swarm-bootstrap
+```
 
 ## 协议栈
 
 | 协议 | 作用 |
 |------|------|
-| Ping | 心跳保活 |
-| Identify | 节点信息交换，`protocol_version` 必须与客户端一致 |
-| Kademlia | DHT Server 模式，强制响应所有查询 |
-| Relay | 中继服务端，为 NAT 后节点转发流量 |
-
-不包含 mDNS、AutoNAT、DCUtR、Request-Response（引导节点不需要）。
+| Ping | 心跳保活（间隔 15s，超时 10s） |
+| Identify | 节点信息交换，`protocol_version` 为 `/swarmdrop/1.0.0`，必须与客户端一致 |
+| Kademlia | DHT Server 模式，record TTL 2h，replication factor 20 |
+| Relay | 中继服务端，circuit 上限 512MB / 1h |
+| AutoNAT v2 | Server 端，帮助客户端判断自身 NAT 状态 |
 
 ## 设计文档
 
