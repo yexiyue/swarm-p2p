@@ -58,7 +58,6 @@ ExecStart=
 ExecStart=/opt/swarm-bootstrap/swarm-bootstrap run \
     --tcp-port 4001 \
     --quic-port 4001 \
-    --key-file /opt/swarm-bootstrap/identity.key \
     --external-ip <你的公网IP>
 ```
 
@@ -75,7 +74,7 @@ journalctl -u swarm-bootstrap -f
 启动后可通过以下命令查看节点 PeerId，客户端需要用它配置引导节点地址：
 
 ```bash
-swarm-bootstrap peer-id --key-file /opt/swarm-bootstrap/identity.key
+swarm-bootstrap peer-id
 # 12D3KooW...
 ```
 
@@ -96,13 +95,13 @@ Commands:
 swarm-bootstrap run [OPTIONS]
     --tcp-port <PORT>       TCP 监听端口          [默认: 4001]
     --quic-port <PORT>      QUIC 监听端口         [默认: 4001]
-    --key-file <PATH>       密钥文件路径           [默认: identity.key]
+    --key-file <PATH>       密钥文件路径           [默认: 二进制所在目录/identity.key]
     --listen-addr <IP>      监听 IP 地址           [默认: 0.0.0.0]
     --idle-timeout <SECS>   空闲连接超时(秒)       [默认: 120]
     --external-ip <IP>      公网 IP 地址（Relay Server 必须设置）
 
 swarm-bootstrap peer-id [OPTIONS]
-    --key-file <PATH>       密钥文件路径           [默认: identity.key]
+    --key-file <PATH>       密钥文件路径           [默认: 二进制所在目录/identity.key]
 ```
 
 `run` 的日志级别通过 `RUST_LOG` 环境变量控制，默认 `info`。

@@ -27,9 +27,9 @@ enum Command {
         #[arg(long, default_value = "4001")]
         quic_port: u16,
 
-        /// 密钥文件路径（protobuf 编码的 Ed25519 密钥对）
-        #[arg(long, default_value = "identity.key")]
-        key_file: PathBuf,
+        /// 密钥文件路径（默认从二进制所在目录查找 identity.key）
+        #[arg(long)]
+        key_file: Option<PathBuf>,
 
         /// 监听的 IP 地址
         #[arg(long, default_value = "0.0.0.0")]
@@ -46,10 +46,23 @@ enum Command {
 
     /// 打印节点 PeerId 后退出
     PeerId {
-        /// 密钥文件路径
-        #[arg(long, default_value = "identity.key")]
-        key_file: PathBuf,
+        /// 密钥文件路径（默认从二进制所在目录查找 identity.key）
+        #[arg(long)]
+        key_file: Option<PathBuf>,
     },
+}
+
+/// 按优先级解析密钥文件路径：
+/// 1. 用户显式传入
+/// 2. 二进制所在目录的 identity.key
+/// 3. 当前目录的 identity.key（兜底）
+fn resolve_key_file(key_file: Option<PathBuf>) -> PathBuf {
+    key_file.unwrap_or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("identity.key")))
+            .unwrap_or_else(|| PathBuf::from("identity.key"))
+    })
 }
 
 fn main() -> Result<()> {
@@ -57,6 +70,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::PeerId { key_file } => {
+            let key_file = resolve_key_file(key_file);
             let keypair = swarm_bootstrap::util::load_or_generate_keypair(&key_file)?;
             println!("{}", keypair.public().to_peer_id());
         }
@@ -76,6 +90,7 @@ fn main() -> Result<()> {
                 )
                 .init();
 
+            let key_file = resolve_key_file(key_file);
             let keypair = swarm_bootstrap::util::load_or_generate_keypair(&key_file)?;
             let peer_id = keypair.public().to_peer_id();
             info!("Node PeerId: {}", peer_id);
