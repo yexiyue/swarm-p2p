@@ -1,4 +1,5 @@
 mod future;
+mod gossipsub;
 mod kad;
 mod req_resp;
 

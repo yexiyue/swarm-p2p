@@ -90,4 +90,43 @@ pub enum NodeEvent<Req = ()> {
         /// 请求内容
         request: Req,
     },
+
+    /// 收到 GossipSub 消息
+    #[serde(rename_all = "camelCase")]
+    GossipMessage {
+        /// 消息原始发送者（签名验证后提取）
+        source: Option<PeerId>,
+        /// topic 名称
+        topic: String,
+        /// 消息内容
+        #[serde(with = "serde_bytes_base64")]
+        data: Vec<u8>,
+    },
+
+    /// 远端节点订阅了某个 GossipSub topic
+    #[serde(rename_all = "camelCase")]
+    GossipSubscribed {
+        peer_id: PeerId,
+        topic: String,
+    },
+
+    /// 远端节点退订了某个 GossipSub topic
+    #[serde(rename_all = "camelCase")]
+    GossipUnsubscribed {
+        peer_id: PeerId,
+        topic: String,
+    },
+}
+
+/// 用于序列化 Vec<u8> 为 base64 字符串（serde JSON 兼容）
+mod serde_bytes_base64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(data: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error> {
+        data.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        Vec::<u8>::deserialize(deserializer)
+    }
 }

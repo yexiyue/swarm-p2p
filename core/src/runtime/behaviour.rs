@@ -1,9 +1,12 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::time::Duration;
-use std::{fmt::Debug, num::NonZeroUsize};
 
+use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::{
-    StreamProtocol, autonat, dcutr, identify, identity::Keypair, kad, mdns, ping, relay,
-    request_response, swarm::NetworkBehaviour,
+    StreamProtocol, autonat, dcutr, gossipsub, identify, identity::Keypair, kad, mdns, ping,
+    relay, request_response, swarm::NetworkBehaviour,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,11 +19,11 @@ use crate::config::NodeConfig;
 /// - `Send` + `Sync`: 跨线程传递
 /// - `'static`: 可被 tokio::spawn 使用
 pub trait CborMessage:
-    Debug + Clone + Serialize + Send + Sync + for<'a> Deserialize<'a> + 'static
+    std::fmt::Debug + Clone + Serialize + Send + Sync + for<'a> Deserialize<'a> + 'static
 {
 }
 impl<T> CborMessage for T where
-    T: Debug + Clone + Serialize + Send + Sync + for<'a> Deserialize<'a> + 'static
+    T: std::fmt::Debug + Clone + Serialize + Send + Sync + for<'a> Deserialize<'a> + 'static
 {
 }
 
@@ -34,6 +37,7 @@ impl<T> CborMessage for T where
 /// - `relay_client`: 中继客户端，NAT 穿透备选方案
 /// - `autonat`: AutoNAT v2 Client，检测外部地址是否可达
 /// - `dcutr`: 打洞协调，实现 NAT 穿透
+/// - `gossipsub`: GossipSub pub/sub 消息广播
 #[derive(NetworkBehaviour)]
 pub struct CoreBehaviour<Req, Resp>
 where
@@ -48,6 +52,7 @@ where
     pub relay_client: relay::client::Behaviour,
     pub autonat: autonat::v2::client::Behaviour,
     pub dcutr: dcutr::Behaviour,
+    pub gossipsub: Toggle<gossipsub::Behaviour>,
 }
 
 impl<Req, Resp> CoreBehaviour<Req, Resp>
@@ -72,9 +77,6 @@ where
         let peer_id = keypair.public().to_peer_id();
 
         // ===== Ping =====
-        // 定期发送心跳包检测连接是否存活
-        // - interval: 心跳间隔，太短浪费带宽，太长检测不及时
-        // - timeout: 超时时间，超过则认为连接断开
         let ping = ping::Behaviour::new(
             ping::Config::new()
                 .with_interval(config.ping_interval)
@@ -82,11 +84,6 @@ where
         );
 
         // ===== Identify =====
-        // 节点信息交换协议，连接建立后自动运行
-        // - protocol_version: 协议版本，用于兼容性检查
-        // - agent_version: 客户端版本，可包含设备信息
-        // - push_listen_addr_updates: 地址变化时主动推送给已连接节点
-        // - cache_size: 缓存最近 N 个节点的信息，避免重复请求
         let identify = identify::Behaviour::new(
             identify::Config::new(config.protocol_version.clone(), keypair.public())
                 .with_agent_version(config.agent_version.clone())
@@ -95,20 +92,10 @@ where
         );
 
         // ===== Kademlia DHT =====
-        // 分布式哈希表，用于：
-        // 1. 跨网络节点发现（通过 PUT_PROVIDER/GET_PROVIDERS）
-        // 2. 存储分享码等元数据（通过 PUT/GET）
-        //
-        // 配置说明：
-        // - query_timeout: 查询超时，网络差时可适当增加
-        // - record_ttl: 记录生存时间，过期自动清理
-        // - replication_factor: 复制因子，存储到 N 个最近节点
-        // - publication_interval: 定期重新发布，保持记录有效
-        // - provider_record_ttl: Provider 记录的 TTL
         let mut kad_config = kad::Config::default();
         kad_config
             .set_query_timeout(config.kad_query_timeout)
-            .set_record_ttl(Some(Duration::from_secs(3600))) // 1 小时
+            .set_record_ttl(Some(Duration::from_secs(3600)))
             .set_replication_factor(NonZeroUsize::new(3).unwrap())
             .set_publication_interval(Some(Duration::from_secs(3600)))
             .set_provider_record_ttl(Some(Duration::from_secs(3600)));
@@ -116,31 +103,21 @@ where
         let mut kad =
             kad::Behaviour::with_config(peer_id, kad::store::MemoryStore::new(peer_id), kad_config);
 
-        // 默认 Kad 模式由 AutoNAT 自动判定（确认公网可达后才切 Server）。
-        // 若 AutoNAT 未确认或处于 NAT 后，节点会停留在 Client 模式，
-        // 不响应 DHT 查询，导致 put_record 等操作因 QuorumFailed 失败。
-        // 在已知可达的场景（如测试、引导节点）可强制设为 Server。
         if config.kad_server_mode {
             kad.set_mode(Some(kad::Mode::Server));
         }
 
         // ===== mDNS =====
-        // 局域网多播 DNS 发现
-        // 自动发现同一局域网内的其他节点，无需引导节点
         let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
             .expect("mDNS initialization failed");
 
         // ===== AutoNAT v2 Client =====
-        // 定期向已连接的 AutoNAT v2 Server（如引导节点）发送探测请求，
-        // 让对方回拨自身地址以确认外部可达性。
-        // 成功确认的地址会自动注册为 ExternalAddr。
         let autonat = autonat::v2::client::Behaviour::default();
 
         // ===== DCUtR =====
-        // Direct Connection Upgrade through Relay
-        // 通过中继连接协调打洞，实现 NAT 穿透后的直连
         let dcutr = dcutr::Behaviour::new(peer_id);
 
+        // ===== Request-Response =====
         let req_resp = request_response::cbor::Behaviour::new(
             [(
                 StreamProtocol::try_from_owned(config.req_resp_protocol.clone())
@@ -149,6 +126,33 @@ where
             )],
             request_response::Config::default().with_request_timeout(config.req_resp_timeout),
         );
+
+        // ===== GossipSub =====
+        let gossipsub = if config.enable_gossipsub {
+            // 基于内容的消息去重：相同内容只处理一次
+            let message_id_fn = |message: &gossipsub::Message| {
+                let mut s = DefaultHasher::new();
+                message.data.hash(&mut s);
+                gossipsub::MessageId::from(s.finish().to_string())
+            };
+
+            let gossipsub_config = gossipsub::ConfigBuilder::default()
+                .heartbeat_interval(config.gossipsub_heartbeat_interval)
+                .validation_mode(gossipsub::ValidationMode::Strict)
+                .message_id_fn(message_id_fn)
+                .build()
+                .expect("valid gossipsub config");
+
+            let behaviour = gossipsub::Behaviour::new(
+                gossipsub::MessageAuthenticity::Signed(keypair.clone()),
+                gossipsub_config,
+            )
+            .expect("valid gossipsub behaviour");
+
+            Toggle::from(Some(behaviour))
+        } else {
+            Toggle::from(None)
+        };
 
         Self {
             ping,
@@ -159,6 +163,7 @@ where
             autonat,
             dcutr,
             req_resp,
+            gossipsub,
         }
     }
 }

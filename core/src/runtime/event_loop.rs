@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::StreamExt;
+use libp2p::gossipsub;
 use libp2p::request_response::{Event as ReqRespEvent, Message};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{autonat, dcutr, ping};
@@ -271,6 +272,10 @@ where
                     peers.iter().map(|(id, _)| *id).collect();
 
                 for peer_id in &dialed {
+                    // 自动添加到 GossipSub mesh
+                    if let Some(gs) = self.swarm.behaviour_mut().gossipsub.as_mut() {
+                        gs.add_explicit_peer(peer_id);
+                    }
                     if !self.swarm.is_connected(peer_id) {
                         info!("mDNS: dialing peer {}", peer_id);
                         if let Err(e) = self.swarm.dial(*peer_id) {
@@ -386,6 +391,40 @@ where
                     local_addr, send_back_addr, error
                 );
                 None
+            }
+            // GossipSub 事件
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                message,
+                ..
+            })) => {
+                debug!(
+                    "GossipSub message from {:?} on topic {}",
+                    message.source,
+                    message.topic
+                );
+                Some(NodeEvent::GossipMessage {
+                    source: message.source,
+                    topic: message.topic.to_string(),
+                    data: message.data,
+                })
+            }
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Gossipsub(
+                gossipsub::Event::Subscribed { peer_id, topic },
+            )) => {
+                debug!("GossipSub: peer {} subscribed to {}", peer_id, topic);
+                Some(NodeEvent::GossipSubscribed {
+                    peer_id,
+                    topic: topic.to_string(),
+                })
+            }
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Gossipsub(
+                gossipsub::Event::Unsubscribed { peer_id, topic },
+            )) => {
+                debug!("GossipSub: peer {} unsubscribed from {}", peer_id, topic);
+                Some(NodeEvent::GossipUnsubscribed {
+                    peer_id,
+                    topic: topic.to_string(),
+                })
             }
             _ => None,
         }

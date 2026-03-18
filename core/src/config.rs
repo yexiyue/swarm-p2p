@@ -54,6 +54,12 @@ pub struct NodeConfig {
     ///
     /// 配对等需要用户交互的场景，默认 10 秒太短，建议 120 秒。
     pub req_resp_timeout: Duration,
+
+    /// 启用 GossipSub pub/sub 协议
+    pub enable_gossipsub: bool,
+
+    /// GossipSub 心跳间隔
+    pub gossipsub_heartbeat_interval: Duration,
 }
 
 impl Default for NodeConfig {
@@ -77,6 +83,8 @@ impl Default for NodeConfig {
             kad_server_mode: false,
             req_resp_protocol: "/swarm-p2p/req/1.0.0".into(),
             req_resp_timeout: Duration::from_secs(120),
+            enable_gossipsub: true,
+            gossipsub_heartbeat_interval: Duration::from_secs(10),
         }
     }
 }
@@ -134,6 +142,16 @@ impl NodeConfig {
         self.req_resp_timeout = timeout;
         self
     }
+
+    pub fn with_gossipsub(mut self, enable: bool) -> Self {
+        self.enable_gossipsub = enable;
+        self
+    }
+
+    pub fn with_gossipsub_heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.gossipsub_heartbeat_interval = interval;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +175,11 @@ mod tests {
         assert_eq!(config.kad_query_timeout, Duration::from_secs(60));
         assert_eq!(config.req_resp_protocol, "/swarm-p2p/req/1.0.0");
         assert_eq!(config.req_resp_timeout, Duration::from_secs(120));
+        assert!(config.enable_gossipsub);
+        assert_eq!(
+            config.gossipsub_heartbeat_interval,
+            Duration::from_secs(10)
+        );
     }
 
     #[test]
