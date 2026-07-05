@@ -8,8 +8,11 @@ pub const DEFAULT_MAX_RESERVATIONS_PER_PEER: usize = 4;
 pub const DEFAULT_RESERVATION_DURATION_SECS: u64 = 3600;
 pub const DEFAULT_MAX_CIRCUITS: usize = 16;
 pub const DEFAULT_MAX_CIRCUITS_PER_PEER: usize = 4;
-pub const DEFAULT_MAX_CIRCUIT_DURATION_SECS: u64 = 3600;
-pub const DEFAULT_MAX_CIRCUIT_BYTES: u64 = 1024 * 1024 * 512;
+/// 12 小时：与客户端 LAN Helper 的 relay 限额策略一致，
+/// 已配对设备间的大文件中继传输不应被时长上限掐断。
+pub const DEFAULT_MAX_CIRCUIT_DURATION_SECS: u64 = 12 * 3600;
+/// 0 = 不限字节（libp2p 语义），文件传输体积由应用层负责。
+pub const DEFAULT_MAX_CIRCUIT_BYTES: u64 = 0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RelayLimits {
@@ -93,9 +96,10 @@ impl BootstrapBehaviour {
         // 为 NAT 后的节点提供中继服务
         // relay::Behaviour 是服务端，与客户端的 relay::client::Behaviour 不同
         //
-        // 默认限制过于严格（128KB / 2min），文件传输会被切断。
-        // 放大限制以支持大文件传输（理想情况下 DCUtR 打洞成功后会走直连，
-        // relay 只在打洞失败时作为兜底）。
+        // libp2p 默认限制过于严格（128KB / 2min），文件传输会被切断。
+        // 默认放宽为 字节不限 + 12h，与客户端 LAN Helper 策略对齐
+        // （理想情况下 DCUtR 打洞成功后会走直连，relay 只在打洞失败时兜底；
+        // public_reachability 开启后 LanOnly 设备也直接在本节点保活 reservation）。
         let relay_config = relay::Config {
             max_reservations: relay_limits.max_reservations,
             max_reservations_per_peer: relay_limits.max_reservations_per_peer,
