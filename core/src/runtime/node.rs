@@ -96,7 +96,6 @@ where
         inbound_protocol_streams,
         dc_registry.clone(),
         inbound_dc_tx,
-        config.enable_relay_client,
         config.infrastructure_mode.clone(),
     );
 

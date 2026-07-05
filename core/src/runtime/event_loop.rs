@@ -44,8 +44,6 @@ where
     /// 用于 reservation 请求幂等去重，以及 ListenerClosed 时上抛
     /// RelayReservationLost 事件。
     relay_listeners: HashMap<libp2p::core::transport::ListenerId, libp2p::PeerId>,
-    /// 是否在连接 bootstrap 后申请 relay reservation。
-    enable_relay_client: bool,
     /// LAN Helper 配置；为空表示普通客户端模式。
     lan_helper: Option<LanHelperConfig>,
     /// 已注册为 external address 的 LAN Helper 地址。
@@ -77,7 +75,6 @@ where
         inbound_protocol_streams: Vec<(StreamProtocol, IncomingStreams)>,
         dc_registry: ChannelRegistry,
         inbound_dc_tx: mpsc::Sender<InboundDataChannel>,
-        enable_relay_client: bool,
         infrastructure_mode: InfrastructureMode,
     ) -> Self {
         // 把每个协议的入站流贴上 protocol 标签后合并，统一在 select! 中 poll。
@@ -99,7 +96,6 @@ where
             pending_id_counter: AtomicU64::new(0),
             bootstrap_peers: HashMap::new(),
             relay_listeners: HashMap::new(),
-            enable_relay_client,
             lan_helper: match infrastructure_mode {
                 InfrastructureMode::LanHelper(config) => Some(config),
                 InfrastructureMode::Off => None,
@@ -121,7 +117,11 @@ where
         Ok(())
     }
 
-    /// 连接引导节点：注册地址到 Kad 路由表、dial，并记录 bootstrap 节点用于后续 relay reservation
+    /// 连接引导节点：注册地址到 Kad 路由表并 dial。
+    ///
+    /// 不再顺带登记 relay reservation 意图——公网 reservation 属于策略决策
+    /// （受上层 public_reachability 设置约束），统一由上层经
+    /// `ensure_relay_reservation` / `add_infrastructure_peer` 命令发起。
     pub fn connect_bootstrap_peers(&mut self, peers: &[(libp2p::PeerId, libp2p::Multiaddr)]) {
         for (peer_id, addr) in peers {
             self.swarm
@@ -133,13 +133,6 @@ where
                 warn!("Failed to dial bootstrap peer {}: {}", peer_id, e);
             } else {
                 info!("Dialing bootstrap peer {} at {}", peer_id, addr);
-            }
-
-            if self.enable_relay_client {
-                self.bootstrap_peers
-                    .entry(*peer_id)
-                    .or_default()
-                    .push(addr.clone());
             }
         }
     }
@@ -601,8 +594,8 @@ where
             return;
         }
 
-        let announceable =
-            is_usable_lan_addr(addr) || (config.announce_loopback_addrs && is_loopback_addr(addr));
+        let announceable = crate::addr::is_private_lan(addr)
+            || (config.announce_loopback_addrs && crate::addr::is_loopback(addr));
         if announceable {
             if !self.advertised_lan_addrs.contains(addr) {
                 self.swarm.add_external_address(addr.clone());
@@ -622,12 +615,16 @@ where
         }
     }
 
-    /// 幂等地请求 relay reservation：该 relay 已有活跃 circuit listener 时 no-op。
+    /// 幂等地请求 relay reservation：relay client 未启用整体 no-op；
+    /// 该 relay 已有活跃 circuit listener 时 no-op。
     fn request_relay_reservations(
         &mut self,
         peer_id: libp2p::PeerId,
         addrs: Vec<libp2p::Multiaddr>,
     ) {
+        if !self.swarm.behaviour().relay_client.is_enabled() {
+            return;
+        }
         if self.relay_listeners.values().any(|p| *p == peer_id) {
             debug!("Relay reservation for {} already active, skip", peer_id);
             return;
@@ -650,50 +647,5 @@ where
                 Err(e) => warn!("Failed to listen on relay circuit {}: {}", relay_addr, e),
             }
         }
-    }
-}
-
-fn is_loopback_addr(addr: &libp2p::Multiaddr) -> bool {
-    addr.iter().any(|protocol| match protocol {
-        libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_loopback(),
-        libp2p::multiaddr::Protocol::Ip6(ip) => ip.is_loopback(),
-        _ => false,
-    })
-}
-
-fn is_usable_lan_addr(addr: &libp2p::Multiaddr) -> bool {
-    addr.iter().any(|protocol| match protocol {
-        libp2p::multiaddr::Protocol::Ip4(ip) => {
-            ip.is_private() && !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified()
-        }
-        libp2p::multiaddr::Protocol::Ip6(ip) => {
-            (ip.segments()[0] & 0xfe00) == 0xfc00 && !ip.is_loopback() && !ip.is_unspecified()
-        }
-        _ => false,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_usable_lan_addr;
-    use libp2p::Multiaddr;
-
-    #[test]
-    fn usable_lan_addr_filters_non_routable_addresses() {
-        let private: Multiaddr = "/ip4/192.168.1.10/tcp/4001".parse().unwrap();
-        let wildcard: Multiaddr = "/ip4/0.0.0.0/tcp/4001".parse().unwrap();
-        let loopback: Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
-        let link_local: Multiaddr = "/ip4/169.254.1.1/tcp/4001".parse().unwrap();
-        let public: Multiaddr = "/ip4/8.8.8.8/tcp/4001".parse().unwrap();
-        let unique_local: Multiaddr = "/ip6/fd00::1/tcp/4001".parse().unwrap();
-        let ipv6_loopback: Multiaddr = "/ip6/::1/tcp/4001".parse().unwrap();
-
-        assert!(is_usable_lan_addr(&private));
-        assert!(is_usable_lan_addr(&unique_local));
-        assert!(!is_usable_lan_addr(&wildcard));
-        assert!(!is_usable_lan_addr(&loopback));
-        assert!(!is_usable_lan_addr(&link_local));
-        assert!(!is_usable_lan_addr(&public));
-        assert!(!is_usable_lan_addr(&ipv6_loopback));
     }
 }

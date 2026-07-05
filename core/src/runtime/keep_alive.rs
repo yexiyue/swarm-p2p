@@ -67,10 +67,6 @@ impl Behaviour {
         }
     }
 
-    pub fn is_kept_alive(&self, peer_id: &PeerId) -> bool {
-        self.allowed.contains(peer_id)
-    }
-
     fn on_established(&mut self, connection_id: ConnectionId, peer_id: PeerId) -> Handler {
         self.connections
             .entry(peer_id)

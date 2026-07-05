@@ -284,3 +284,48 @@ async fn dynamic_infrastructure_peer_skips_reservation_when_relay_client_disable
         "relay client disabled should not request reservation"
     );
 }
+
+/// 回归：配置层 bootstrap 节点不再自动建立 relay reservation——
+/// 公网 reservation 属策略决策（public_reachability），统一由上层
+/// ensure_relay_reservation / add_infrastructure_peer 显式发起。
+#[tokio::test(flavor = "multi_thread")]
+async fn bootstrap_peers_do_not_auto_reserve() {
+    let helper_key = swarm_p2p_core::libp2p::identity::Keypair::generate_ed25519();
+    let helper_id = PeerId::from_public_key(&helper_key.public());
+    let (_helper_client, mut helper_events, _dc) =
+        start::<Ping, Pong>(helper_key, helper_config()).expect("start helper");
+    let helper_addr = wait_for_listen_addr(&mut helper_events).await;
+
+    let client_key = swarm_p2p_core::libp2p::identity::Keypair::generate_ed25519();
+    let config = client_config(true).with_bootstrap_peers(vec![(helper_id, helper_addr.clone())]);
+    let (client, mut client_events, _cdc) =
+        start::<Ping, Pong>(client_key, config).expect("start client");
+
+    // 等待连接建立（bootstrap 自动 dial）
+    timeout(TIMEOUT, async {
+        loop {
+            if client.is_connected(helper_id).await.unwrap_or(false) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("bootstrap peer should connect");
+
+    // identify 完成后的时间窗内不得出现自动 reservation
+    assert!(
+        !wait_reservation_accepted(&mut client_events, helper_id, Duration::from_secs(3)).await,
+        "bootstrap 连接不应自动建立 reservation"
+    );
+
+    // 显式 ensure 仍可建立（策略层的正常路径）
+    client
+        .ensure_relay_reservation(helper_id, vec![helper_addr])
+        .await
+        .expect("ensure");
+    assert!(
+        wait_reservation_accepted(&mut client_events, helper_id, TIMEOUT).await,
+        "显式 ensure 应建立 reservation"
+    );
+}

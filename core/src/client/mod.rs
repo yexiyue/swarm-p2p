@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::Result;
 use crate::command::{
     AddInfrastructurePeerCommand, AddPeerAddrsCommand, Command, DialCommand, DisconnectCommand,
-    EnsureRelayReservationCommand, GetListenAddrsCommand, IsConnectedCommand, SetKeepAliveCommand,
+    GetListenAddrsCommand, IsConnectedCommand, SetKeepAliveCommand,
 };
 use crate::config::InfrastructureRoles;
 use crate::data_channel::{ChannelRegistry, DataChannel};
@@ -116,12 +116,18 @@ where
     /// 幂等地确保对指定 relay 持有 reservation（已有活跃 reservation 则 no-op）。
     ///
     /// 地址会常驻登记，断线重连（identify）时自动重建 reservation。
+    /// 语义上是 [`add_infrastructure_peer`](Self::add_infrastructure_peer) 的
+    /// relay-only 特化；relay client 未启用时事件循环侧整体 no-op（仅登记地址与拨号）。
     pub async fn ensure_relay_reservation(
         &self,
         peer_id: PeerId,
         addrs: Vec<Multiaddr>,
     ) -> Result<()> {
-        let cmd = EnsureRelayReservationCommand::new(peer_id, addrs);
+        let cmd = AddInfrastructurePeerCommand::new(
+            peer_id,
+            addrs,
+            crate::config::InfrastructureRoles::relay_server(),
+        );
         CommandFuture::new(cmd, self.command_tx.clone()).await
     }
 
