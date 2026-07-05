@@ -47,3 +47,4 @@ dns = ["libp2p/dns"]
 # 测试用 #[tokio::test(flavor = "multi_thread")] + timeout，
 # 显式声明这些 feature，避免仅靠 workspace feature unification（单独构建 core 时会缺）。
 tokio = { version = "1.49.0", features = ["macros", "sync", "rt", "rt-multi-thread", "time"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

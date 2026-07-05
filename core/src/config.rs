@@ -24,8 +24,11 @@ impl Default for RelayLimits {
             reservation_duration: Duration::from_secs(30 * 60),
             max_circuits: 8,
             max_circuits_per_peer: 2,
-            max_circuit_duration: Duration::from_secs(30 * 60),
-            max_circuit_bytes: 64 * 1024 * 1024,
+            // 电路时长仅用于回收僵尸电路（半天量级）；被回收的已配对连接
+            // 由 presence 的断连宽限机制无感重建
+            max_circuit_duration: Duration::from_secs(12 * 60 * 60),
+            // 自己的设备给自己转发，流量上限没有意义——64MiB 会掐断大文件中继传输
+            max_circuit_bytes: u64::MAX,
         }
     }
 }
@@ -49,6 +52,12 @@ pub struct LanHelperConfig {
     pub relay_limits: RelayLimits,
     /// 是否把可用私有 LAN 地址注册为可公告地址，供 relay reservation 返回。
     pub announce_private_addrs: bool,
+    /// 是否把 loopback 地址也注册为可公告地址。
+    ///
+    /// 仅用于单机测试/联调：relay reservation 的响应必须携带
+    /// relay 的外部地址（否则客户端以 NoAddressesInReservation 拒绝），
+    /// 而纯 loopback 环境下没有可路由的 LAN 地址可公告。生产保持 false。
+    pub announce_loopback_addrs: bool,
 }
 
 impl Default for LanHelperConfig {
@@ -57,6 +66,7 @@ impl Default for LanHelperConfig {
             enable_kad_server: true,
             relay_limits: RelayLimits::default(),
             announce_private_addrs: true,
+            announce_loopback_addrs: false,
         }
     }
 }
@@ -345,6 +355,7 @@ mod tests {
                 max_circuit_bytes: 1024,
             },
             announce_private_addrs: false,
+            announce_loopback_addrs: false,
         };
         let config = NodeConfig::new("/test/1.0.0", "Test/1.0.0")
             .with_listen_addrs(vec![addr.clone()])
@@ -389,16 +400,22 @@ mod tests {
     }
 
     #[test]
-    fn lan_helper_defaults_are_conservative() {
+    fn lan_helper_defaults_fit_file_transfer() {
         let config = LanHelperConfig::default();
 
         assert!(config.enable_kad_server);
         assert!(config.announce_private_addrs);
+        assert!(!config.announce_loopback_addrs);
         assert_eq!(config.relay_limits.max_reservations, 16);
         assert_eq!(config.relay_limits.max_reservations_per_peer, 2);
         assert_eq!(config.relay_limits.max_circuits, 8);
         assert_eq!(config.relay_limits.max_circuits_per_peer, 2);
-        assert_eq!(config.relay_limits.max_circuit_bytes, 64 * 1024 * 1024);
+        // 文件传输适配：流量不设限（掐断传输没有意义），时长仅回收僵尸电路
+        assert_eq!(config.relay_limits.max_circuit_bytes, u64::MAX);
+        assert_eq!(
+            config.relay_limits.max_circuit_duration,
+            Duration::from_secs(12 * 60 * 60)
+        );
     }
 
     #[test]

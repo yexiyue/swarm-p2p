@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::Result;
 use crate::command::{
     AddInfrastructurePeerCommand, AddPeerAddrsCommand, Command, DialCommand, DisconnectCommand,
-    GetListenAddrsCommand, IsConnectedCommand, SetKeepAliveCommand,
+    EnsureRelayReservationCommand, GetListenAddrsCommand, IsConnectedCommand, SetKeepAliveCommand,
 };
 use crate::config::InfrastructureRoles;
 use crate::data_channel::{ChannelRegistry, DataChannel};
@@ -110,6 +110,18 @@ where
     /// 将指定 peer 的地址注册到 Swarm 地址簿。
     pub async fn add_peer_addrs(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
         let cmd = AddPeerAddrsCommand::new(peer_id, addrs);
+        CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    /// 幂等地确保对指定 relay 持有 reservation（已有活跃 reservation 则 no-op）。
+    ///
+    /// 地址会常驻登记，断线重连（identify）时自动重建 reservation。
+    pub async fn ensure_relay_reservation(
+        &self,
+        peer_id: PeerId,
+        addrs: Vec<Multiaddr>,
+    ) -> Result<()> {
+        let cmd = EnsureRelayReservationCommand::new(peer_id, addrs);
         CommandFuture::new(cmd, self.command_tx.clone()).await
     }
 

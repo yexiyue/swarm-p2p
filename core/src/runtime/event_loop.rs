@@ -36,8 +36,14 @@ where
     /// pending_id 自增计数器
     pending_id_counter: AtomicU64,
     /// Bootstrap 节点地址映射（peer_id → 地址列表），
-    /// 用于在连接建立后申请 relay reservation
+    /// 用于在连接建立后申请 relay reservation。
+    /// 条目常驻（不再一次性移除）：每次 identify 都会触发幂等的
+    /// reservation 请求，配合 relay_listeners 去重，实现断线后自动重建。
     bootstrap_peers: HashMap<libp2p::PeerId, Vec<libp2p::Multiaddr>>,
+    /// 活跃 circuit listener → relay peer 映射。
+    /// 用于 reservation 请求幂等去重，以及 ListenerClosed 时上抛
+    /// RelayReservationLost 事件。
+    relay_listeners: HashMap<libp2p::core::transport::ListenerId, libp2p::PeerId>,
     /// 是否在连接 bootstrap 后申请 relay reservation。
     enable_relay_client: bool,
     /// LAN Helper 配置；为空表示普通客户端模式。
@@ -92,6 +98,7 @@ where
             pending_channels,
             pending_id_counter: AtomicU64::new(0),
             bootstrap_peers: HashMap::new(),
+            relay_listeners: HashMap::new(),
             enable_relay_client,
             lan_helper: match infrastructure_mode {
                 InfrastructureMode::LanHelper(config) => Some(config),
@@ -206,13 +213,16 @@ where
     async fn handle_command(&mut self, mut cmd: Command<Req, Resp>) {
         cmd.run_boxed(&mut self.swarm).await;
         if let Some((peer_id, addrs)) = cmd.take_relay_reservation_request() {
+            // 无论当前是否连接都登记地址（条目常驻，identify 时幂等触发），
+            // 已连接则立即请求一次
+            let entry = self.bootstrap_peers.entry(peer_id).or_default();
+            for addr in &addrs {
+                if !entry.contains(addr) {
+                    entry.push(addr.clone());
+                }
+            }
             if self.swarm.is_connected(&peer_id) {
                 self.request_relay_reservations(peer_id, addrs);
-            } else {
-                self.bootstrap_peers
-                    .entry(peer_id)
-                    .or_default()
-                    .extend(addrs);
             }
         }
         self.active_commands.push(cmd);
@@ -396,7 +406,9 @@ where
                         "Added peer {} to Kad + Swarm (protocol: {})",
                         peer_id, info.protocol_version
                     );
-                    if let Some(addrs) = self.bootstrap_peers.remove(&peer_id) {
+                    // 条目常驻：每次 identify 都触发（内部幂等去重），
+                    // 使断线后的 reservation 随重连自动重建
+                    if let Some(addrs) = self.bootstrap_peers.get(&peer_id).cloned() {
                         self.request_relay_reservations(peer_id, addrs);
                     }
                 } else {
@@ -466,7 +478,13 @@ where
                     "Listener {:?} closed (addresses: {:?}): {:?}",
                     listener_id, addresses, reason
                 );
-                None
+                // circuit listener 关闭 = reservation 失效，上抛给收敛层重建。
+                // 同一 relay 可能有多个地址各挂一个 listener（部分地址已失效的场景），
+                // 仅在该 relay 的最后一个 listener 关闭时才上抛，避免误报。
+                self.relay_listeners
+                    .remove(&listener_id)
+                    .filter(|peer| !self.relay_listeners.values().any(|p| p == peer))
+                    .map(|relay_peer_id| NodeEvent::RelayReservationLost { relay_peer_id })
             }
             SwarmEvent::ListenerError { listener_id, error } => {
                 warn!("Listener {:?} error: {}", listener_id, error);
@@ -583,7 +601,9 @@ where
             return;
         }
 
-        if is_usable_lan_addr(addr) {
+        let announceable =
+            is_usable_lan_addr(addr) || (config.announce_loopback_addrs && is_loopback_addr(addr));
+        if announceable {
             if !self.advertised_lan_addrs.contains(addr) {
                 self.swarm.add_external_address(addr.clone());
                 self.advertised_lan_addrs.push(addr.clone());
@@ -602,11 +622,16 @@ where
         }
     }
 
+    /// 幂等地请求 relay reservation：该 relay 已有活跃 circuit listener 时 no-op。
     fn request_relay_reservations(
         &mut self,
         peer_id: libp2p::PeerId,
         addrs: Vec<libp2p::Multiaddr>,
     ) {
+        if self.relay_listeners.values().any(|p| *p == peer_id) {
+            debug!("Relay reservation for {} already active, skip", peer_id);
+            return;
+        }
         for addr in addrs {
             let base = if addr
                 .iter()
@@ -618,11 +643,22 @@ where
             };
             let relay_addr = base.with(libp2p::multiaddr::Protocol::P2pCircuit);
             match self.swarm.listen_on(relay_addr.clone()) {
-                Ok(_) => info!("Requesting relay reservation via {}", relay_addr),
+                Ok(listener_id) => {
+                    self.relay_listeners.insert(listener_id, peer_id);
+                    info!("Requesting relay reservation via {}", relay_addr);
+                }
                 Err(e) => warn!("Failed to listen on relay circuit {}: {}", relay_addr, e),
             }
         }
     }
+}
+
+fn is_loopback_addr(addr: &libp2p::Multiaddr) -> bool {
+    addr.iter().any(|protocol| match protocol {
+        libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_loopback(),
+        libp2p::multiaddr::Protocol::Ip6(ip) => ip.is_loopback(),
+        _ => false,
+    })
 }
 
 fn is_usable_lan_addr(addr: &libp2p::Multiaddr) -> bool {

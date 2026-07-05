@@ -10,7 +10,12 @@ use swarm_p2p_core::{
 use tokio::time::{Duration, timeout};
 
 fn helper_config() -> NodeConfig {
-    explicit_dial_config().with_lan_helper(LanHelperConfig::default())
+    // 单机测试全在 loopback 上：必须公告 loopback 地址，
+    // 否则 reservation 响应无地址、客户端以 NoAddressesInReservation 拒绝
+    explicit_dial_config().with_lan_helper(LanHelperConfig {
+        announce_loopback_addrs: true,
+        ..LanHelperConfig::default()
+    })
 }
 
 fn client_config(relay_client: bool) -> NodeConfig {
@@ -120,6 +125,123 @@ async fn dynamic_infrastructure_peer_requests_relay_reservation() {
     })
     .await
     .expect("helper should accept dynamic relay reservation");
+}
+
+/// 等待针对指定 relay 的 reservation accepted 事件
+async fn wait_reservation_accepted(
+    events: &mut swarm_p2p_core::EventReceiver<Ping>,
+    relay: PeerId,
+    window: Duration,
+) -> bool {
+    timeout(window, async {
+        loop {
+            match events.recv().await {
+                Some(NodeEvent::RelayReservationAccepted { relay_peer_id, .. })
+                    if relay_peer_id == relay =>
+                {
+                    return;
+                }
+                Some(_) => {}
+                None => panic!("event stream closed"),
+            }
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ensure_relay_reservation_is_idempotent() {
+    let (
+        _helper_client,
+        client,
+        mut client_events,
+        _client_id,
+        _helper_events,
+        helper_id,
+        helper_addr,
+    ) = start_helper_and_client(true).await;
+
+    client
+        .ensure_relay_reservation(helper_id, vec![helper_addr.clone()])
+        .await
+        .expect("ensure_relay_reservation");
+    assert!(
+        wait_reservation_accepted(&mut client_events, helper_id, TIMEOUT).await,
+        "first ensure should establish reservation"
+    );
+
+    // 再次 ensure：已有活跃 listener，必须 no-op（不产生第二次 accepted）
+    client
+        .ensure_relay_reservation(helper_id, vec![helper_addr])
+        .await
+        .expect("second ensure");
+    assert!(
+        !wait_reservation_accepted(&mut client_events, helper_id, Duration::from_secs(2)).await,
+        "second ensure must be a no-op (no new reservation request)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reservation_lost_event_and_reestablish() {
+    let helper_key = swarm_p2p_core::libp2p::identity::Keypair::generate_ed25519();
+    let helper_id = PeerId::from_public_key(&helper_key.public());
+    let (helper_client, mut helper_events, _helper_dc) =
+        start::<Ping, Pong>(helper_key, helper_config()).expect("start helper");
+    let helper_addr = wait_for_listen_addr(&mut helper_events).await;
+
+    let client_key = swarm_p2p_core::libp2p::identity::Keypair::generate_ed25519();
+    let (client, mut client_events, _client_dc) =
+        start::<Ping, Pong>(client_key, client_config(true)).expect("start client");
+    let _ = wait_for_listen_addr(&mut client_events).await;
+
+    client
+        .ensure_relay_reservation(helper_id, vec![helper_addr])
+        .await
+        .expect("ensure_relay_reservation");
+    assert!(
+        wait_reservation_accepted(&mut client_events, helper_id, TIMEOUT).await,
+        "reservation should be established"
+    );
+
+    // 杀掉 helper：连接断 → circuit listener 永久关闭 → 必须上抛 Lost 事件
+    drop(helper_client);
+    drop(helper_events);
+
+    let lost = timeout(TIMEOUT, async {
+        loop {
+            match client_events.recv().await {
+                Some(NodeEvent::RelayReservationLost { relay_peer_id })
+                    if relay_peer_id == helper_id =>
+                {
+                    return;
+                }
+                Some(_) => {}
+                None => panic!("event stream closed"),
+            }
+        }
+    })
+    .await;
+    assert!(
+        lost.is_ok(),
+        "listener closed must surface RelayReservationLost"
+    );
+
+    // helper 重启（同 key、新端口）后，再次 ensure 可重建
+    let helper_key2 = swarm_p2p_core::libp2p::identity::Keypair::generate_ed25519();
+    let helper_id2 = PeerId::from_public_key(&helper_key2.public());
+    let (_helper_client2, mut helper_events2, _dc2) =
+        start::<Ping, Pong>(helper_key2, helper_config()).expect("restart helper");
+    let helper_addr2 = wait_for_listen_addr(&mut helper_events2).await;
+
+    client
+        .ensure_relay_reservation(helper_id2, vec![helper_addr2])
+        .await
+        .expect("re-ensure after loss");
+    assert!(
+        wait_reservation_accepted(&mut client_events, helper_id2, TIMEOUT).await,
+        "reservation should be re-established after loss"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

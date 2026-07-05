@@ -83,6 +83,11 @@ pub enum NodeEvent<Req = ()> {
         error: String,
     },
 
+    /// relay reservation 丢失：对应的 circuit listener 已永久关闭
+    /// （与 relay 的连接断开或续约失败）。收敛层据此触发重建。
+    #[serde(rename_all = "camelCase")]
+    RelayReservationLost { relay_peer_id: PeerId },
+
     /// Relay 预约已被接受，本节点可通过中继被连接
     #[serde(rename_all = "camelCase")]
     RelayReservationAccepted {
