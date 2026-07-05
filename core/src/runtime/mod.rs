@@ -1,5 +1,6 @@
 mod behaviour;
 mod event_loop;
+pub mod keep_alive;
 mod node;
 
 pub use behaviour::{CborMessage, CoreBehaviour, CoreBehaviourEvent};

@@ -54,6 +54,14 @@ pub enum NodeEvent<Req = ()> {
         rtt_ms: u64,
     },
 
+    /// Ping 失败（超时/流错误）。
+    ///
+    /// libp2p 0.52+ 的 ping 失败不再关闭连接，只上报事件；
+    /// TCP 传输无 keepalive，死对端需上层依据连续失败主动断连
+    /// （QUIC 传输层自带 10s idle 判死，通常先于此事件生效）。
+    #[serde(rename_all = "camelCase")]
+    PingFailure { peer_id: PeerId, error: String },
+
     /// NAT 状态变化
     #[serde(rename_all = "camelCase")]
     NatStatusChanged {

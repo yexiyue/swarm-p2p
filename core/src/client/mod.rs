@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::Result;
 use crate::command::{
     AddInfrastructurePeerCommand, AddPeerAddrsCommand, Command, DialCommand, DisconnectCommand,
-    GetListenAddrsCommand, IsConnectedCommand,
+    GetListenAddrsCommand, IsConnectedCommand, SetKeepAliveCommand,
 };
 use crate::config::InfrastructureRoles;
 use crate::data_channel::{ChannelRegistry, DataChannel};
@@ -90,6 +90,14 @@ where
     /// 断开与指定 peer 的所有连接。
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         let cmd = DisconnectCommand::new(peer_id);
+        CommandFuture::new(cmd, self.command_tx.clone()).await
+    }
+
+    /// 增删指定 peer 的连接保活白名单。
+    ///
+    /// 白名单内 peer 的连接不会被 idle_connection_timeout 空闲回收。
+    pub async fn set_keep_alive(&self, peer_id: PeerId, enabled: bool) -> Result<()> {
+        let cmd = SetKeepAliveCommand::new(peer_id, enabled);
         CommandFuture::new(cmd, self.command_tx.clone()).await
     }
 

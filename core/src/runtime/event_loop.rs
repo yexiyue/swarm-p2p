@@ -372,6 +372,14 @@ where
                 peer_id: peer,
                 rtt_ms: rtt.as_millis() as u64,
             }),
+            SwarmEvent::Behaviour(CoreBehaviourEvent::Ping(ping::Event {
+                peer,
+                result: Err(failure),
+                ..
+            })) => Some(NodeEvent::PingFailure {
+                peer_id: peer,
+                error: failure.to_string(),
+            }),
             SwarmEvent::Behaviour(CoreBehaviourEvent::Identify(
                 libp2p::identify::Event::Received { peer_id, info, .. },
             )) => {

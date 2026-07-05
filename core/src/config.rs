@@ -231,6 +231,11 @@ impl NodeConfig {
         self
     }
 
+    pub fn with_idle_connection_timeout(mut self, timeout: Duration) -> Self {
+        self.idle_connection_timeout = timeout;
+        self
+    }
+
     pub fn with_kad_server_mode(mut self, enable: bool) -> Self {
         self.kad_server_mode = enable;
         self

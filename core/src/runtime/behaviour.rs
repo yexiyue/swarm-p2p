@@ -27,7 +27,9 @@ impl<T> CborMessage for T where
 /// 核心网络行为
 ///
 /// 组合了 P2P 网络所需的各种协议：
-/// - `ping`: 心跳检测，保持连接活跃
+/// - `ping`: 定期测量 RTT / 探测对端存活。注意 libp2p 0.52+ 起 ping 不再保活连接
+///   （ping 流被 ignore_for_keep_alive 排除），空闲连接仍会被 idle_connection_timeout 回收
+/// - `keep_alive`: 逐 peer 保活白名单，业务层（如已配对设备）借此豁免空闲回收
 /// - `identify`: 节点信息交换，获取对方设备信息
 /// - `kad`: Kademlia DHT，分布式哈希表用于跨网络发现
 /// - `mdns`: 局域网发现，无需中心服务器
@@ -41,6 +43,7 @@ where
     Resp: CborMessage,
 {
     pub ping: ping::Behaviour,
+    pub keep_alive: super::keep_alive::Behaviour,
     pub identify: identify::Behaviour,
     pub kad: kad::Behaviour<kad::store::MemoryStore>,
     pub req_resp: request_response::cbor::Behaviour<Req, Resp>,
@@ -74,9 +77,12 @@ where
         let peer_id = keypair.public().to_peer_id();
 
         // ===== Ping =====
-        // 定期发送心跳包检测连接是否存活
+        // 定期发送心跳包测量 RTT / 探测对端存活
         // - interval: 心跳间隔，太短浪费带宽，太长检测不及时
-        // - timeout: 超时时间，超过则认为连接断开
+        // - timeout: 超时时间，超过判定本次 ping 失败（仅上报事件，不关连接）
+        //
+        // 注意：libp2p 0.52+ 的 ping 不保活连接——ping 流被 ignore_for_keep_alive
+        // 排除在空闲判定之外，连接保活由下面的 keep_alive behaviour 按白名单承担。
         let ping = ping::Behaviour::new(
             ping::Config::new()
                 .with_interval(config.ping_interval)
@@ -186,6 +192,7 @@ where
 
         Self {
             ping,
+            keep_alive: super::keep_alive::Behaviour::default(),
             identify,
             kad,
             mdns,

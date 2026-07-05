@@ -7,6 +7,7 @@ mod handler;
 mod is_connected;
 mod kad;
 mod req_resp;
+mod set_keep_alive;
 
 pub use add_infrastructure_peer::*;
 pub use add_peer_addrs::*;
@@ -17,3 +18,4 @@ pub use handler::*;
 pub use is_connected::*;
 pub use kad::*;
 pub use req_resp::*;
+pub use set_keep_alive::*;
